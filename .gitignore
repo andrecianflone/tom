@@ -1,0 +1,12 @@
+tags
+*.swp
+*__pycache*
+simple_lm/data
+*.pt
+saved/*
+*reference.py
+*.nfs*
+*example.txt
+*old_main.py
+*results*
+*.data/*
