@@ -9,4 +9,4 @@ saved/*
 *example.txt
 *old_main.py
 *results*
-*.data/*
+.data/
