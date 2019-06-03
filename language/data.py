@@ -1,4 +1,5 @@
 import os
+import shutil
 import json
 import argparse
 import random
@@ -130,6 +131,8 @@ class NaivePsychCorpus():
         """
         if not os.path.exists(path):
             os.makedirs(path)
+        else:
+            shutil.rmtree(path)
 
         for name, data in self.datasets.items():
             src, trg, src_meta, trg_meta = self.extract_lines(data)
@@ -240,7 +243,7 @@ class NaiveDataset(TranslationDataset):
     """
     name = "naive"
     @classmethod
-    def splits(cls, exts, fields, root='.data',
+    def splits(cls, exts, fields, root='.data/stories/story_commonsense/torchtext',
                train='train', validation='val', test='test', **kwargs):
         """Create dataset objects for splits of the Multi30k dataset.
 
@@ -257,11 +260,8 @@ class NaiveDataset(TranslationDataset):
 
         One way to use this class:
         """
-        if 'path' not in kwargs:
-            path = os.path.join(root, cls.name)
-        else:
-            path = kwargs['path']
-            del kwargs['path']
+        path = kwargs['path']
+        del kwargs['path']
 
         return super(NaiveDataset, cls).splits(
             exts, fields, path, root, train, validation, test, **kwargs)
@@ -340,9 +340,13 @@ if __name__ == '__main__':
                         default="language/.data/stories/story_commonsense",
                         help='Source of the commonsense dataset')
 
+    parser.add_argument('--commonsense_target',
+                        default="language/.data/stories/story_commonsense/torchtext",
+                        help='Where to save the naive torchtext data')
+
     args = parser.parse_args()
     if args.create_naive:
         data_path = args.commonsense_location + '/json_version/annotations.json'
         corpus = NaivePsychCorpus(data_path, 0.10)
-        corpus.create_torchtext_files(".data/naive")
+        corpus.create_torchtext_files(args.commonsense_target)
 
