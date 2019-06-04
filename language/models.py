@@ -8,30 +8,35 @@ class RNNModel(nn.Module):
     Simple model from pytorch repo
     Container module with an encoder, a recurrent module, and a decoder.
     """
-    def __init__(self, rnn_type, ntoken, ninp, nhid, nlayers, dropout=0.5, tie_weights=False):
+    def __init__(self, rnn_type, ntoken, ninp, nhid, nlayers, dropout=0.5,
+                                                            tie_weights=False):
         super(RNNModel, self).__init__()
         self.drop = nn.Dropout(dropout)
         self.encoder = nn.Embedding(ntoken, ninp)
         if rnn_type in ['LSTM', 'GRU']:
-            self.rnn = getattr(nn, rnn_type)(ninp, nhid, nlayers, dropout=dropout)
+            self.rnn = getattr(nn, rnn_type)(ninp, nhid, nlayers,
+                                                            dropout=dropout)
         else:
             try:
-                nonlinearity = {'RNN_TANH': 'tanh', 'RNN_RELU': 'relu'}[rnn_type]
+                nonlinearity = {'RNN_TANH': 'tanh',
+                                                'RNN_RELU': 'relu'}[rnn_type]
             except KeyError:
-                raise ValueError( """An invalid option for `--model` was supplied,
-                                 options are ['LSTM', 'GRU', 'RNN_TANH' or 'RNN_RELU']""")
-            self.rnn = nn.RNN(ninp, nhid, nlayers, nonlinearity=nonlinearity, dropout=dropout)
+                raise ValueError( """An invalid option for `--model` was
+                                supplied, options are ['LSTM', 'GRU',
+                                'RNN_TANH' or 'RNN_RELU']""")
+            self.rnn = nn.RNN(ninp, nhid, nlayers, nonlinearity=nonlinearity,
+                                                            dropout=dropout)
         self.decoder = nn.Linear(nhid, ntoken)
 
-        # Optionally tie weights as in:
-        # "Using the Output Embedding to Improve Language Models" (Press & Wolf 2016)
-        # https://arxiv.org/abs/1608.05859
-        # and
-        # "Tying Word Vectors and Word Classifiers: A Loss Framework for Language Modeling" (Inan et al. 2016)
+        # Optionally tie weights as in: "Using the Output Embedding to Improve
+        # Language Models" (Press & Wolf 2016) https://arxiv.org/abs/1608.05859
+        # and "Tying Word Vectors and Word Classifiers: A Loss Framework for
+        # Language Modeling" (Inan et al. 2016)
         # https://arxiv.org/abs/1611.01462
         if tie_weights:
             if nhid != ninp:
-                raise ValueError('When using the tied flag, nhid must be equal to emsize')
+                raise ValueError("""When using the tied flag, nhid must be
+                                                            equal to emsize""")
             self.decoder.weight = self.encoder.weight
 
         self.init_weights()
@@ -50,8 +55,9 @@ class RNNModel(nn.Module):
         emb = self.drop(self.encoder(input))
         output, hidden = self.rnn(emb, hidden)
         output = self.drop(output)
-        decoded = self.decoder(output.view(output.size(0)*output.size(1), output.size(2)))
-        return decoded.view(output.size(0), output.size(1), decoded.size(1)), hidden
+        decoded = self.decoder(output.view(output.size(0)*output.size(1),
+                                                            output.size(2)))
+        return decoded.view(output.size(0), output.size(1), decoded.size(1)),hidden
 
     def init_hidden(self, bsz):
         weight = next(self.parameters())
@@ -75,7 +81,6 @@ class Encoder(nn.Module):
         self.dropout = dropout
         self.embedding = nn.Embedding(input_dim, emb_dim)
         self.rnn = nn.GRU(emb_dim, enc_hid_dim, bidirectional = True)
-        self.fc = nn.Linear(enc_hid_dim * 2, dec_hid_dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, src, src_len):
@@ -92,13 +97,6 @@ class Encoder(nn.Module):
         packed_embedded = nn.utils.rnn.pack_padded_sequence(embedded, src_len)
         packed_outputs, hidden = self.rnn(packed_embedded)
         outputs, _ = nn.utils.rnn.pad_packed_sequence(packed_outputs)
-
-        # TODO: Below should be moved to seq2seq instead of encoder initial
-        # decoder hidden is final hidden state of the forwards and backwards
-
-        # Project to output
-        hidden = self.fc(torch.cat((hidden[-2,:,:], hidden[-1,:,:]), dim = 1))
-        hidden = torch.tanh(hidden)
 
         return outputs, hidden
 
@@ -219,6 +217,10 @@ class Seq2Seq(nn.Module):
         self.sos_idx = sos_idx
         self.eos_idx = eos_idx
         self.device = device
+        enc_hid_dim = encoder.enc_hid_dim
+        dec_hid_dim = decoder.dec_hid_dim
+        # FC layer to project encoder hidden to decoder hidden
+        self.fc = nn.Linear(enc_hid_dim * 2, dec_hid_dim)
 
         # Initialize weights
         self.apply(init_weights)
@@ -257,6 +259,10 @@ class Seq2Seq(nn.Module):
         #encoder_outputs is all hidden states of the input sequence, back and forwards
         #hidden is the final forward and backward hidden states, passed through a linear layer
         encoder_outputs, hidden = self.encoder(src, src_len)
+
+        # Project Encoder output hidden to Decoder hidden
+        hidden = self.fc(torch.cat((hidden[-2,:,:], hidden[-1,:,:]), dim = 1))
+        hidden = torch.tanh(hidden)
 
         #first input to the decoder is the <sos> tokens
         output = trg[0,:]
