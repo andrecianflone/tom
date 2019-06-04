@@ -243,8 +243,8 @@ class NaiveDataset(TranslationDataset):
     """
     name = "naive"
     @classmethod
-    def splits(cls, exts, fields, root='.data/stories/story_commonsense/torchtext',
-               train='train', validation='val', test='test', **kwargs):
+    def splits(cls, exts, fields, root='.data/', train='train',
+                                validation='val', test='test', **kwargs):
         """Create dataset objects for splits of the Multi30k dataset.
 
         Arguments:
@@ -260,8 +260,11 @@ class NaiveDataset(TranslationDataset):
 
         One way to use this class:
         """
-        path = kwargs['path']
-        del kwargs['path']
+        if 'path' not in kwargs:
+            path = os.path.join(root, "stories/story_commonsense/torchtext")
+        else:
+            path = kwargs['path']
+            del kwargs['path']
 
         return super(NaiveDataset, cls).splits(
             exts, fields, path, root, train, validation, test, **kwargs)
