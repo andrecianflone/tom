@@ -3,10 +3,12 @@ tags
 *__pycache*
 simple_lm/data
 *.pt
-saved/*
 *reference.py
 *.nfs*
 *example.txt
 *old_main.py
 *results*
 .data/
+saved/
+saved_models/
+sync_repo.sh

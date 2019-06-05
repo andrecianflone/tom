@@ -1,9 +1,5 @@
 """
-Seq2Seq with Attention, packed seq and masking, based on:
-https://github.com/bentrevett/pytorch-seq2seq/blob/master/4%20-%20Packed%20Padded%20Sequences%2C%20Masking%20and%20Inference.ipynb
-
-See all models, including transformer here:
-https://github.com/bentrevett/pytorch-seq2seq
+LM on the Naive Psych story dataset
 """
 import random
 import math
