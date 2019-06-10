@@ -1,4 +1,6 @@
 import torch
+from functools import wraps
+import time
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -57,4 +59,18 @@ def epoch_time(start_time, end_time):
     elapsed_mins = int(elapsed_time / 60)
     elapsed_secs = int(elapsed_time - (elapsed_mins * 60))
     return elapsed_mins, elapsed_secs
+
+def log_time_delta(func):
+    """
+    Decorate `func` to compute & print execute time
+    """
+    @wraps(func)
+    def _deco(*args, **kwargs):
+        start = time.time()
+        ret = func(*args, **kwargs)
+        end = time.time()
+        delta = end - start
+        print( "%s runed %.2f seconds"% (func.__name__,delta))
+        return ret
+    return _deco
 

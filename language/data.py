@@ -4,13 +4,16 @@ import json
 import argparse
 import random
 from io import open
-import dill
+import pickle
 import torch
 import nltk
 from nltk import word_tokenize
 from torchtext.datasets import TranslationDataset
 import spacy
 from torchtext.data import Field, BucketIterator
+from utils import log_time_delta
+from tqdm import tqdm
+import numpy as np
 
 class Dictionary(object):
     def __init__(self):
@@ -269,6 +272,49 @@ class NaiveDataset(TranslationDataset):
         return super(NaiveDataset, cls).splits(
             exts, fields, path, root, train, validation, test, **kwargs)
 
+@log_time_delta
+def vectors_lookup(vectors,vocab,dim):
+    """
+    Return vector np array, mapping word idx to embedding. Each missing
+    embeddings will be randomly initialized.
+
+    Args:
+        vectors: dictionary of word to embedding
+        vocab: dictionary of word to idx
+        dim: embedding size
+    """
+    embedding = np.zeros((len(vocab),dim))
+    count = 1
+    for word in vocab:
+        if word in vectors:
+            count += 1
+            embedding[vocab[word]]= vectors[word]
+        else:
+            embedding[vocab[word]]= np.random.uniform(-0.5,+0.5,dim)#vectors['[UNKNOW]'] #.tolist()
+    print( 'word in embedding',count)
+    return embedding
+
+@log_time_delta
+def load_text_vec(alphabet,filename="",embedding_size=-1):
+    vectors = {}
+    with open(filename,encoding='utf-8') as f:
+        for line in tqdm(f):
+            items = line.strip().split(' ')
+            if len(items) == 2:
+                vocab_size, embedding_size= items[0],items[1]
+                print( 'embedding_size',embedding_size)
+                print( 'vocab_size in pretrained embedding',vocab_size)
+            else:
+                word = items[0]
+                if word in alphabet:
+                    vectors[word] = items[1:]
+    print( 'words needing to be found ',len(alphabet))
+    print( 'words found in embedding file',len(vectors.keys()))
+
+    if embedding_size==-1:
+        embedding_size = len(vectors[list(vectors.keys())[0]])
+    return vectors, embedding_size
+
 # Load tokenizers
 spacy_en = spacy.load('en')
 
@@ -282,19 +328,6 @@ def load_naive(args):
     """
     Convenience function to load pickle or dataset
     """
-    # if os.path.isfile(args.prepared_data):
-        # print("Found data pickle, loading from {}".format(args.prepared_data))
-        # with open(args.prepared_data, 'rb') as p:
-            # d = dill.load(p)
-            # train_iterator = d["train_iterator"]
-            # valid_iterator = d["valid_iterator"]
-            # test_iterator  = d["test_iterator"]
-            # src            = d["src"]
-            # trg            = d["trg"]
-        # return train_iterator, valid_iterator, test_iterator, src, trg
-
-    # Create torchtext Fields for each language
-    # and assign the correct tokenizer function
     src = Field(tokenize = tokenize_en,
                 init_token = '<sos>',
                 eos_token = '<eos>',
@@ -310,11 +343,42 @@ def load_naive(args):
                     exts = (args.src_ext, args.trg_ext), fields = (src, trg))
 
     # Build vocabularies
-    src.build_vocab(train_data, min_freq = 2)
-    trg.build_vocab(train_data, min_freq = 2)
+    if os.path.isfile(args.prepared_data):
+        print(f"Found data pickle, loading from {args.prepared_data}")
+        with open(args.prepared_data, 'rb') as p:
+            d = pickle.load(p)
+            src.vocab = d["src.vocab"]
+            trg.vocab = d["trg.vocab"]
+            args.embedding_size = d["embedding_size"]
+            args.embeddings = d["embeddings"]
+    else:
+        # Build vocabs
+        src.build_vocab(train_data, min_freq = 2)
+        trg.build_vocab(train_data, min_freq = 2)
+
+        # Load Glove embeddings
+        str_to_idx = src.vocab.stoi # word to idx dictionary
+        # `loaded_vectors` is a dictionary of words to embeddings
+        loaded_vectors, embedding_size = load_text_vec(str_to_idx,
+                                                            args.embeddings_path)
+        # `vectors`, np array of idx-to-embedding
+        vectors = vectors_lookup(loaded_vectors,str_to_idx, embedding_size)
+        args.embedding_size = embedding_size
+
+        # Pickle Field vocab for later faster load
+        with open(args.prepared_data, 'wb') as p:
+            d = {}
+            d["src.vocab"] = src.vocab
+            d["trg.vocab"] = trg.vocab
+            d["embedding_size"] = args.embedding_size
+            d["embeddings"] = args.embeddings
+            pickle.dump(d, p, protocol=pickle.HIGHEST_PROTOCOL)
+            print(f"Saved prepared data for future fast load to: {args.prepared_data}")
+
     print(f"Source vocab size: {len(src.vocab)}")
     print(f"Target vocab size: {len(trg.vocab)}")
 
+    # Data iterators
     train_iterator, valid_iterator, test_iterator = BucketIterator.splits(
         (train_data, valid_data, test_data),
          batch_size = args.batch_size,
@@ -322,17 +386,7 @@ def load_naive(args):
          sort_key = lambda x : len(x.src),
          device = args.device)
 
-    # with open(args.prepared_data, 'wb') as p:
-        # d = {}
-        # d["train_iterator"] = train_iterator
-        # d["valid_iterator"] = valid_iterator
-        # d["test_iterator"] = test_iterator
-        # d["src"] = src
-        # d["trg"] = trg
-        # dill.dump(d, p)
-        # print("Saved prepared data for future fast load to: {}".format(\
-                                                    # args.prepared_data))
-    return train_iterator, valid_iterator, test_iterator, src, trg
+    return train_iterator, valid_iterator, test_iterator, src, trg, embeddings
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Datasets')

@@ -1,7 +1,6 @@
 """
 LM on the Naive Psych story dataset
 """
-import random
 import math
 import time
 import os
@@ -17,11 +16,14 @@ import utils
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def train(model, iterator, optimizer, criterion, clip):
+def train(args, model, iterator, optimizer, criterion, clip):
     model.train()
     epoch_loss = 0
 
     for i, batch in enumerate(iterator):
+        # For debugging, check if max num of batches
+        if args.max_batches is not None and args.max_batches > i:
+            break
         src, src_len = batch.src
         trg = batch.trg
         optimizer.zero_grad()
@@ -64,10 +66,11 @@ def evaluate(model, iterator, criterion):
 
 def get_data_model(args):
     # Get data
-    train_iterator, valid_iterator, test_iterator, src, trg = data.load_naive(args)
-    # print(f"Number of training examples: {len(train_data.examples)}")
-    # print(f"Number of validation examples: {len(valid_data.examples)}")
-    # print(f"Number of testing examples: {len(test_data.examples)}")
+    train_iterator, valid_iterator, test_iterator, src, trg, embeddings =\
+                                                        data.load_naive(args)
+    print(f"Number of training examples: {len(train_iterator.examples)}")
+    print(f"Number of validation examples: {len(valid_iterator.examples)}")
+    print(f"Number of testing examples: {len(test_itererator.examples)}")
 
     # Create model
     input_dim = len(src.vocab)
@@ -137,7 +140,7 @@ def main(args):
     for epoch in range(args.max_epochs):
         start_time = time.time()
 
-        train_loss = train(model, train_iterator, optimizer, criterion, args.grad_clip)
+        train_loss = train(args, model, train_iterator, optimizer, criterion, args.grad_clip)
         valid_loss = evaluate(model, valid_iterator, criterion)
 
         end_time = time.time()
@@ -181,9 +184,17 @@ if __name__ == '__main__':
     parser.add_argument('--saved_model_name', type=str, default='naive.pt')
     parser.add_argument('--max_epochs', type=int, default=15,
                         help='upper epoch limit')
+    parser.add_argument('--max_batches', type=int, default=None,
+                        help='Max batches per epoch, for debugging (default None)')
     parser.add_argument('--prepared_data', type=str,
-                        default='.data/64_naive_data.pickle',
+                        default='.data/naive_data.pickle',
                         help='path of prepared data')
+
+    parser.add_argument('--use_pretrained_embeddings', action='store_true',
+                                    default=True, help='Use pretrained embeddings such as Glove')
+    parser.add_argument('--embeddings_path', type=str,
+                        default='.data/embeddings/glove.6B.300d.txt',
+                        help='Glove embeddings path')
     parser.add_argument('--label_cond', action='store_true', default=True,
                         help='Label conditioning')
 
@@ -210,7 +221,7 @@ if __name__ == '__main__':
 
     args.device = device
     # Set seeds
-    random.seed(args.seed)
+    # random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = True
 
