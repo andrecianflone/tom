@@ -152,7 +152,8 @@ class Decoder(nn.Module):
 
         self.embedding = nn.Embedding(output_dim, emb_dim)
         self.rnn = nn.GRU((enc_hid_dim * 2) + emb_dim, dec_hid_dim)
-        self.out = nn.Linear((enc_hid_dim * 2) + dec_hid_dim + emb_dim, output_dim)
+        self.out = nn.Linear((enc_hid_dim * 2) + dec_hid_dim + emb_dim,
+                                                                    output_dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, input, hidden, encoder_outputs, mask):
@@ -208,7 +209,8 @@ def init_weights(m):
             nn.init.constant_(param.data, 0)
 
 class Seq2Seq(nn.Module):
-    def __init__(self, encoder, decoder, pad_idx, sos_idx, eos_idx, device):
+    def __init__(self, encoder, decoder, pad_idx, sos_idx, eos_idx, device,
+                    use_embeddings, embeddings_matrix, trainable_embeddings):
         super().__init__()
 
         self.encoder = encoder
@@ -224,6 +226,18 @@ class Seq2Seq(nn.Module):
 
         # Initialize weights
         self.apply(init_weights)
+
+        # If use embeddings, initialize weights for enc/dec
+        if use_embeddings:
+            self.encoder.embedding.weight.data.copy_(\
+                                    torch.from_numpy(embeddings_matrix))
+            self.decoder.embedding.weight.data.copy_(\
+                                    torch.from_numpy(embeddings_matrix))
+
+        # If not trainable, no grad embeddings
+        if not trainable_embeddings:
+            self.encoder.embedding.requires_grad = False
+            self.decoder.embedding.requires_grad = False
 
     def create_mask(self, src):
         mask = (src != self.pad_idx).permute(1, 0)

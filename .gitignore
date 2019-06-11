@@ -12,3 +12,4 @@ simple_lm/data
 saved/
 saved_models/
 sync_repo.sh
+debug*

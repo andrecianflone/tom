@@ -1,6 +1,8 @@
 import os
 import shutil
 import json
+from collections import Counter, OrderedDict
+from itertools import chain
 import argparse
 import random
 from io import open
@@ -9,6 +11,7 @@ import torch
 import nltk
 from nltk import word_tokenize
 from torchtext.datasets import TranslationDataset
+from torchtext.data import Dataset
 import spacy
 from torchtext.data import Field, BucketIterator
 from utils import log_time_delta
@@ -344,25 +347,29 @@ def load_naive(args):
 
     # Build vocabularies
     if os.path.isfile(args.prepared_data):
+        # Load from pickle
         print(f"Found data pickle, loading from {args.prepared_data}")
         with open(args.prepared_data, 'rb') as p:
             d = pickle.load(p)
             src.vocab = d["src.vocab"]
             trg.vocab = d["trg.vocab"]
+            combined_vocab = d["combined_vocab"]
             args.embedding_size = d["embedding_size"]
-            args.embeddings = d["embeddings"]
+            embeddings = d["embeddings"]
     else:
-        # Build vocabs
+        # Build vocabs. Will check `src` or `trg` field in `train_data`
         src.build_vocab(train_data, min_freq = 2)
         trg.build_vocab(train_data, min_freq = 2)
+        # Build single vocab, use
+        combined_vocab = build_combined_vocab(src, train_data)
 
         # Load Glove embeddings
         str_to_idx = src.vocab.stoi # word to idx dictionary
         # `loaded_vectors` is a dictionary of words to embeddings
         loaded_vectors, embedding_size = load_text_vec(str_to_idx,
-                                                            args.embeddings_path)
+                                                        args.embeddings_path)
         # `vectors`, np array of idx-to-embedding
-        vectors = vectors_lookup(loaded_vectors,str_to_idx, embedding_size)
+        embeddings = vectors_lookup(loaded_vectors,str_to_idx, embedding_size)
         args.embedding_size = embedding_size
 
         # Pickle Field vocab for later faster load
@@ -370,10 +377,16 @@ def load_naive(args):
             d = {}
             d["src.vocab"] = src.vocab
             d["trg.vocab"] = trg.vocab
+            d["combined_vocab"] = combined_vocab
             d["embedding_size"] = args.embedding_size
-            d["embeddings"] = args.embeddings
+            d["embeddings"] = embeddings
             pickle.dump(d, p, protocol=pickle.HIGHEST_PROTOCOL)
             print(f"Saved prepared data for future fast load to: {args.prepared_data}")
+
+    # Build single vocab for both src and trg
+    if args.single_vocab:
+        src.vocab = combined_vocab
+        trg.vocab = combined_vocab
 
     print(f"Source vocab size: {len(src.vocab)}")
     print(f"Target vocab size: {len(trg.vocab)}")
@@ -387,6 +400,46 @@ def load_naive(args):
          device = args.device)
 
     return train_iterator, valid_iterator, test_iterator, src, trg, embeddings
+
+def build_combined_vocab(field, *args, **kwargs):
+    """
+    Build single vocab from all fields in Dataset object
+    Modified from torchtext `build_vocab`:
+    https://github.com/pytorch/text/blob/master/torchtext/data/field.py#L277
+
+    Args:
+        Positional arguments: Dataset objects or other iterable data
+            sources from which to construct the Vocab object that
+            represents the set of possible values for this field. If
+            a Dataset object is provided, all columns corresponding
+            to this field are used; individual columns can also be
+            provided directly.
+
+        Remaining keyword arguments: Passed to the constructor of Vocab.
+    """
+    counter = Counter()
+    sources = []
+    for arg in args:
+        if isinstance(arg, Dataset):
+            # Removed field check from original
+            sources += [getattr(arg, name) for name, field in
+                                                            arg.fields.items()]
+        else:
+            sources.append(arg)
+    for data in sources:
+        for x in data:
+            if not field.sequential:
+                x = [x]
+            try:
+                counter.update(x)
+            except TypeError:
+                counter.update(chain.from_iterable(x))
+    specials = list(OrderedDict.fromkeys(
+        tok for tok in [field.unk_token, field.pad_token, field.init_token,
+                        field.eos_token] + kwargs.pop('specials', [])
+        if tok is not None))
+    vocab = field.vocab_cls(counter, specials=specials, **kwargs)
+    return vocab
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Datasets')

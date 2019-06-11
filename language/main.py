@@ -68,9 +68,9 @@ def get_data_model(args):
     # Get data
     train_iterator, valid_iterator, test_iterator, src, trg, embeddings =\
                                                         data.load_naive(args)
-    print(f"Number of training examples: {len(train_iterator.examples)}")
-    print(f"Number of validation examples: {len(valid_iterator.examples)}")
-    print(f"Number of testing examples: {len(test_itererator.examples)}")
+    print(f"Number of training examples: {len(train_iterator)}")
+    print(f"Number of validation examples: {len(valid_iterator)}")
+    print(f"Number of testing examples: {len(test_iterator)}")
 
     # Create model
     input_dim = len(src.vocab)
@@ -83,7 +83,9 @@ def get_data_model(args):
                                                                 args.dropout)
     dec = Decoder(output_dim, args.emb_dim, args.enc_dim, args.dec_dim,
                                                             args.dropout, attn)
-    model = Seq2Seq(enc, dec, pad_idx, sos_idx, eos_idx, device).to(device)
+    model = Seq2Seq(enc, dec, pad_idx, sos_idx, eos_idx, device,
+                                args.use_pretrained_embeddings, embeddings,
+                                args.trainable_embeddings).to(device)
 
     print(f'The model has {utils.count_parameters(model):,} trainable parameters')
     return train_iterator, valid_iterator, test_iterator, model, src, trg
@@ -165,44 +167,48 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('--batch_size', type=int, default=64, metavar='N',
+    add = parser.add_argument
+    add('--batch_size', type=int, default=64, metavar='N',
                         help='batch size')
-    parser.add_argument('--seed', type=int, default=1111,
+    add('--seed', type=int, default=1111,
                         help='random seed')
-    parser.add_argument('--enc_dim', type=int, default=256, metavar='N',
+    add('--enc_dim', type=int, default=256, metavar='N',
                         help='encoder hidden size')
-    parser.add_argument('--dec_dim', type=int, default=256, metavar='N',
+    add('--dec_dim', type=int, default=256, metavar='N',
                         help='decoder hidden size')
-    parser.add_argument('--emb_dim', type=int, default=200, metavar='N',
+    add('--emb_dim', type=int, default=300, metavar='N',
                         help='embedding size')
-    parser.add_argument('--dropout', type=float, default=0.5,
+    add('--dropout', type=float, default=0.5,
                         help='dropout applied to layers (0 = no dropout)')
-    parser.add_argument('--grad_clip', type=float, default=1.0,
+    add('--grad_clip', type=float, default=1.0,
                         help='Gradient norm clip')
-    parser.add_argument('--save', action='store_true', default=True,
+    add('--save', action='store_true', default=True,
                         help='Whether to save the model while training')
-    parser.add_argument('--saved_model_name', type=str, default='naive.pt')
-    parser.add_argument('--max_epochs', type=int, default=15,
+    add('--saved_model_name', type=str, default='naive.pt')
+    add('--max_epochs', type=int, default=15,
                         help='upper epoch limit')
-    parser.add_argument('--max_batches', type=int, default=None,
+    add('--max_batches', type=int, default=None,
                         help='Max batches per epoch, for debugging (default None)')
-    parser.add_argument('--prepared_data', type=str,
-                        default='.data/naive_data.pickle',
+    add('--prepared_data', type=str, default='.data/naive_data.pickle',
                         help='path of prepared data')
 
-    parser.add_argument('--use_pretrained_embeddings', action='store_true',
-                                    default=True, help='Use pretrained embeddings such as Glove')
-    parser.add_argument('--embeddings_path', type=str,
+    add('--use_pretrained_embeddings', action='store_true',
+                default=True, help='Use pretrained embeddings such as Glove')
+    add('--trainable_embeddings', action='store_true',
+                    default=False, help='Should embeddings should trainable')
+    add('--embeddings_path', type=str,
                         default='.data/embeddings/glove.6B.300d.txt',
                         help='Glove embeddings path')
-    parser.add_argument('--label_cond', action='store_true', default=True,
+    add('--label_cond', action='store_true', default=True,
                         help='Label conditioning')
 
-    parser.add_argument('--generate', action='store_true', default=False,
+    add('--generate', action='store_true', default=False,
                         help='Inference test')
     # Datasets
-    parser.add_argument('--with_emotions', action='store_true', default=False,
+    add('--with_emotions', action='store_true', default=False,
                         help='Use the source datasets with emotions')
+    add('--single_vocab', action='store_true', default=True,
+                        help='Same vocab for encoder and decoder')
 
     args = parser.parse_args()
 
