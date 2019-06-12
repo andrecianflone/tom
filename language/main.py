@@ -68,9 +68,9 @@ def get_data_model(args):
     # Get data
     train_iterator, valid_iterator, test_iterator, src, trg, embeddings =\
                                                         data.load_naive(args)
-    print(f"Number of training examples: {len(train_iterator)}")
-    print(f"Number of validation examples: {len(valid_iterator)}")
-    print(f"Number of testing examples: {len(test_iterator)}")
+    print(f"Number of training examples: {len(train_iterator.dataset.examples)}")
+    print(f"Number of validation examples: {len(valid_iterator.dataset.examples)}")
+    print(f"Number of testing examples: {len(test_iterator.dataset.examples)}")
 
     # Create model
     input_dim = len(src.vocab)
