@@ -65,10 +65,11 @@ class Corpus(object):
         return ids
 
 class NaivePsychCorpus():
-    def __init__(self, path, test_percent):
+    def __init__(self, path, test_percent, expanded_dataset=False):
         self.dictionary = Dictionary()
         self.train, self.valid, self.test = self.read_data(path, test_percent)
         self.name = "naive"
+        self.expanded_dataset = expanded_dataset
         self.datasets = {
                 "train": self.train,
                 "val":self.valid,
@@ -84,16 +85,8 @@ class NaivePsychCorpus():
         with open(path, 'r') as f:
             data = json.load(f)
 
-        # train, valid_test = self.split_dict(data, test_percent*2)
-        # valid, test = self.split_dict(valid_test, 0.5)
         train, valid, test = self.split_dict_label(data)
         return train, valid, test
-
-        # test_valid_size = int((len(keys)*args.test_percent)*2)
-        # keys[-int((len(keys)*args.test_percent)*2):]
-        # test_idx = test_valid[len(test_valid)//2:]
-        # valid_idx = test_valid[:len(test_valid)//2]
-        # train_idx = keys[:-int((len(keys)*args.test_percent)*2)]
 
     def split_dict_label(self, d, shuffle=False):
         """
@@ -134,6 +127,9 @@ class NaivePsychCorpus():
         """
         Saves train.src and train.trg files for train/test/valid
         To be used with torchtext TranslationDataset object
+
+        Args:
+            path (str): dir where to save the files
         """
         if not os.path.exists(path):
             os.makedirs(path)
@@ -162,6 +158,13 @@ class NaivePsychCorpus():
     def extract_lines(self, d):
         """
         Extract all lines of text per story. Last line in speparate list.
+
+        Args:
+            d (dictionary): Contains all stories
+            expanded_dataset: If true, will permute each story to create 5
+                samples: sentence 1 as source, sentence 2 as target; sentence
+                1-2 as source, sentence 3 as target, and so on. Otherwise,
+                simply sentence 1-4 as source, and 5 as target.
         """
         source = [] # Just series of sentences
         source_w_meta = [] # Sentences with emotions
@@ -183,13 +186,18 @@ class NaivePsychCorpus():
                 emotions = self.get_line_emotions(sentence["characters"])
                 context_meta.append(start_line_tag + sentence["text"]\
                                                         + emo_tag + emotions)
-            # Last sentence as target
-            target.append(context[-1])
-            source.append(" ".join(context[:-1]))
+            # Determine if single source/target, or multiple
+            it = 1 if self.expanded_dataset else len(context)
 
-            # Last sentence as target
-            target_w_meta.append(context_meta[-1])
-            source_w_meta.append(" ".join(context_meta[:-1]))
+            # Source is 0 to target -1 sentences. Target is the last
+            for i in range(it, len(context)):
+                source.append(" ".join(context[0:i]))
+                target.append(context[i])
+
+                # With meta data
+                source_w_meta.append(" ".join(context_meta[0:i]))
+                target_w_meta.append(context_meta[i])
+
         return source, target, source_w_meta, target_w_meta
 
     def get_line_emotions(self, d):
@@ -342,8 +350,14 @@ def load_naive(args):
                 eos_token = '<eos>',
                 lower = True)
 
+    if args.expanded_dataset:
+        path = ".data/stories/story_commonsense/torchtext_expanded"
+    else:
+        path = ".data/stories/story_commonsense/torchtext"
+
     train_data, valid_data, test_data = NaiveDataset.splits(\
-                    exts = (args.src_ext, args.trg_ext), fields = (src, trg))
+                    exts = (args.src_ext, args.trg_ext), fields = (src, trg),
+                    path=path)
 
     # Build vocabularies
     if os.path.isfile(args.prepared_data):
@@ -364,7 +378,11 @@ def load_naive(args):
         combined_vocab = build_combined_vocab(src, train_data)
 
         # Load Glove embeddings
-        str_to_idx = src.vocab.stoi # word to idx dictionary
+        if args.single_vocab:
+            str_to_idx = combined_vocab.stoi # word to idx dictionary
+        else:
+            str_to_idx = src.vocab.stoi # word to idx dictionary
+
         # `loaded_vectors` is a dictionary of words to embeddings
         loaded_vectors, embedding_size = load_text_vec(str_to_idx,
                                                         args.embeddings_path)
@@ -446,17 +464,26 @@ if __name__ == '__main__':
     parser.add_argument('--create_naive', action='store_true',default=False,
                         help='Create the Naive dataset text files')
 
+    parser.add_argument('--create_naive_expanded', action='store_true',default=False,
+                        help='Create the Naive dataset and permute all samples')
+
     parser.add_argument('--commonsense_location',
-                        default="language/.data/stories/story_commonsense",
+                        default=".data/stories/story_commonsense",
                         help='Source of the commonsense dataset')
 
     parser.add_argument('--commonsense_target',
-                        default="language/.data/stories/story_commonsense/torchtext",
+                        default=".data/stories/story_commonsense/torchtext",
                         help='Where to save the naive torchtext data')
 
     args = parser.parse_args()
     if args.create_naive:
         data_path = args.commonsense_location + '/json_version/annotations.json'
         corpus = NaivePsychCorpus(data_path, 0.10)
+        corpus.create_torchtext_files(args.commonsense_target)
+
+    if args.create_naive_expanded:
+        data_path = args.commonsense_location + '/json_version/annotations.json'
+        corpus = NaivePsychCorpus(data_path, 0.10, True)
+        args.commonsense_target = args.commonsense_target + "_expanded"
         corpus.create_torchtext_files(args.commonsense_target)
 

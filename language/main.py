@@ -191,9 +191,10 @@ if __name__ == '__main__':
                         help='Max batches per epoch, for debugging (default None)')
     add('--prepared_data', type=str, default='.data/naive_data.pickle',
                         help='path of prepared data')
-
+    add('--expanded_dataset', action='store_true', default=False,
+                        help='Expanded Naive dataset')
     add('--use_pretrained_embeddings', action='store_true',
-                default=True, help='Use pretrained embeddings such as Glove')
+                default=False, help='Use pretrained embeddings such as Glove')
     add('--trainable_embeddings', action='store_true',
                     default=False, help='Should embeddings should trainable')
     add('--embeddings_path', type=str,
