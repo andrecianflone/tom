@@ -26,4 +26,6 @@ cd $root_dir
 naive_target=$naive_dir/torchtext
 python language/data.py --create_naive --commonsense_location $naive_dir --commonsense_target $naive_target
 
-
+echo "Getting Glove embeddings"
+cd $root_dir
+bash setup_scripts/download_glove.sh $root_dir/language/.data/embeddings/
