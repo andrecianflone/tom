@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import random
+import data
 
 class RNNModel(nn.Module):
     """
@@ -71,7 +72,8 @@ class RNNModel(nn.Module):
 # A lot of the Seq2Seq code based on:
 # https://github.com/bentrevett/pytorch-seq2seq
 class Encoder(nn.Module):
-    def __init__(self, input_dim, emb_dim, enc_hid_dim, dec_hid_dim, dropout):
+    def __init__(self, input_dim, emb_dim, enc_hid_dim, dec_hid_dim, dropout,
+                                                                str_to_idx):
         super().__init__()
 
         self.input_dim = input_dim
@@ -82,6 +84,7 @@ class Encoder(nn.Module):
         self.embedding = nn.Embedding(input_dim, emb_dim)
         self.rnn = nn.GRU(emb_dim, enc_hid_dim, bidirectional = True)
         self.dropout = nn.Dropout(dropout)
+        self.str_to_idx = str_to_idx
 
     def forward(self, src, src_len):
         """
@@ -140,7 +143,8 @@ class Attention(nn.Module):
         return F.softmax(attention, dim = 1)
 
 class Decoder(nn.Module):
-    def __init__(self, output_dim, emb_dim, enc_hid_dim, dec_hid_dim, dropout, attention):
+    def __init__(self, output_dim, emb_dim, enc_hid_dim, dec_hid_dim, dropout,
+                                                        attention, str_to_idx):
         super().__init__()
 
         self.emb_dim = emb_dim
@@ -155,6 +159,7 @@ class Decoder(nn.Module):
         self.out = nn.Linear((enc_hid_dim * 2) + dec_hid_dim + emb_dim,
                                                                     output_dim)
         self.dropout = nn.Dropout(dropout)
+        self.str_to_idx = str_to_idx
 
     def forward(self, input, hidden, encoder_outputs, mask):
         """
@@ -210,7 +215,12 @@ def init_weights(m):
 
 class Seq2Seq(nn.Module):
     def __init__(self, encoder, decoder, pad_idx, sos_idx, eos_idx, device,
-                    use_embeddings, embeddings_matrix, trainable_embeddings):
+                    use_embeddings, loaded_vectors, trainable_embeddings):
+        """
+
+        Args:
+            loaded_vectors (dict) : all words in data mapped to embedding
+        """
         super().__init__()
 
         self.encoder = encoder
@@ -229,10 +239,15 @@ class Seq2Seq(nn.Module):
 
         # If use embeddings, initialize weights for enc/dec
         if use_embeddings:
-            self.encoder.embedding.weight.data.copy_(\
-                                    torch.from_numpy(embeddings_matrix))
-            self.decoder.embedding.weight.data.copy_(\
-                                    torch.from_numpy(embeddings_matrix))
+
+            # np array of idx-to-embedding
+            enc_emb = data.vectors_lookup(loaded_vectors,encoder.str_to_idx,
+                                                            encoder.emb_dim)
+            self.encoder.embedding.weight.data.copy_(torch.from_numpy(enc_emb))
+
+            dec_emb = data.vectors_lookup(loaded_vectors,decoder.str_to_idx,
+                                                            decoder.emb_dim)
+            self.decoder.embedding.weight.data.copy_(torch.from_numpy(dec_emb))
 
         # If not trainable, no grad embeddings
         if not trainable_embeddings:
@@ -295,5 +310,4 @@ class Seq2Seq(nn.Module):
                 return outputs[:t], attentions[:t]
 
         return outputs, attentions
-
 
