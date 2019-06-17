@@ -368,8 +368,8 @@ def load_naive(args):
             src.vocab = d["src.vocab"]
             trg.vocab = d["trg.vocab"]
             combined_vocab = d["combined_vocab"]
-            args.embedding_size = d["embedding_size"]
-            embeddings = d["embeddings"]
+            args.emb_dim = d["emb_dim"]
+            loaded_vectors = d["loaded_vectors"]
     else:
         # Build vocabs. Will check `src` or `trg` field in `train_data`
         src.build_vocab(train_data, min_freq = 2)
@@ -378,17 +378,15 @@ def load_naive(args):
         combined_vocab = build_combined_vocab(src, train_data)
 
         # Load Glove embeddings
-        if args.single_vocab:
-            str_to_idx = combined_vocab.stoi # word to idx dictionary
-        else:
-            str_to_idx = src.vocab.stoi # word to idx dictionary
+        str_to_idx_combined = combined_vocab.stoi # word to idx dictionary
+        str_to_idx = src.vocab.stoi # word to idx dictionary
 
         # `loaded_vectors` is a dictionary of words to embeddings
-        loaded_vectors, embedding_size = load_text_vec(str_to_idx,
+        # To be sure to include entire vocab, we save the embeddings for the
+        # combined vocab
+        loaded_vectors, embedding_size = load_text_vec(str_to_idx_combined,
                                                         args.embeddings_path)
-        # `vectors`, np array of idx-to-embedding
-        embeddings = vectors_lookup(loaded_vectors,str_to_idx, embedding_size)
-        args.embedding_size = embedding_size
+        args.emb_dim = embedding_size
 
         # Pickle Field vocab for later faster load
         with open(args.prepared_data, 'wb') as p:
@@ -396,8 +394,8 @@ def load_naive(args):
             d["src.vocab"] = src.vocab
             d["trg.vocab"] = trg.vocab
             d["combined_vocab"] = combined_vocab
-            d["embedding_size"] = args.embedding_size
-            d["embeddings"] = embeddings
+            d["emb_dim"] = args.emb_dim
+            d["loaded_vectors"] = loaded_vectors
             pickle.dump(d, p, protocol=pickle.HIGHEST_PROTOCOL)
             print(f"Saved prepared data for future fast load to: {args.prepared_data}")
 
@@ -417,7 +415,7 @@ def load_naive(args):
          sort_key = lambda x : len(x.src),
          device = args.device)
 
-    return train_iterator, valid_iterator, test_iterator, src, trg, embeddings
+    return train_iterator,valid_iterator,test_iterator,src,trg,loaded_vectors
 
 def build_combined_vocab(field, *args, **kwargs):
     """
