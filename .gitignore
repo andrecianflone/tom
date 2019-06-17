@@ -13,3 +13,4 @@ saved/
 saved_models/
 sync_repo.sh
 debug*
+run.sh
