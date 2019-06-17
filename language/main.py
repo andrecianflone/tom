@@ -66,7 +66,7 @@ def evaluate(model, iterator, criterion):
 
 def get_data_model(args):
     # Get data
-    train_iterator, valid_iterator, test_iterator, src, trg, embeddings =\
+    train_iterator, valid_iterator, test_iterator, src, trg, loaded_vectors =\
                                                         data.load_naive(args)
     print(f"Number of training examples: {len(train_iterator.dataset.examples)}")
     print(f"Number of validation examples: {len(valid_iterator.dataset.examples)}")
@@ -80,11 +80,11 @@ def get_data_model(args):
     eos_idx = trg.vocab.stoi['<eos>']
     attn = Attention(args.enc_dim, args.dec_dim)
     enc = Encoder(input_dim, args.emb_dim, args.enc_dim, args.dec_dim,
-                                                                args.dropout)
+                                                args.dropout, src.vocab.stoi)
     dec = Decoder(output_dim, args.emb_dim, args.enc_dim, args.dec_dim,
-                                                            args.dropout, attn)
+                                            args.dropout, attn, trg.vocab.stoi)
     model = Seq2Seq(enc, dec, pad_idx, sos_idx, eos_idx, device,
-                                args.use_pretrained_embeddings, embeddings,
+                                args.use_pretrained_embeddings, loaded_vectors,
                                 args.trainable_embeddings).to(device)
 
     print(f'The model has {utils.count_parameters(model):,} trainable parameters')
@@ -135,6 +135,7 @@ def main(args):
     # TRAIN LOOP
     #####################################
     best_valid_loss = float('inf')
+    best_valid_epoch = 0
     optimizer = optim.Adam(model.parameters())
     pad_idx = src.vocab.stoi['<pad>']
     criterion = nn.CrossEntropyLoss(ignore_index = pad_idx)
@@ -152,6 +153,7 @@ def main(args):
             if not os.path.exists(folder):
                 os.makedirs(folder)
             best_valid_loss = valid_loss
+            best_valid_epoch = epoch
             torch.save(model.state_dict(), args.save_path)
 
         print(f'Epoch: {epoch+1:02} | Time: {epoch_mins}m {epoch_secs}s')
@@ -163,7 +165,9 @@ def main(args):
     #####################################
     model.load_state_dict(torch.load(args.save_path))
     test_loss = evaluate(model, test_iterator, criterion)
-    print(f'| Test Loss: {test_loss:.3f} | Test PPL: {math.exp(test_loss):7.3f} |')
+    print('****RESULTS****')
+    print(f'| Best Val. Loss: {best_valid_loss:.3f} | Best Val. PPL: {math.exp(best_valid_loss):7.3f} | At epoch: {best_valid_epoch} ')
+    print(f'| Test Loss with best val model: {test_loss:.3f} | Test PPL: {math.exp(test_loss):7.3f} | At epoch: {best_valid_epoch} ')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='')
@@ -208,7 +212,7 @@ if __name__ == '__main__':
     # Datasets
     add('--with_emotions', action='store_true', default=False,
                         help='Use the source datasets with emotions')
-    add('--single_vocab', action='store_true', default=True,
+    add('--single_vocab', action='store_true', default=False,
                         help='Same vocab for encoder and decoder')
 
     args = parser.parse_args()
