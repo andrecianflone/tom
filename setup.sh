@@ -9,7 +9,6 @@ find $rood_dir -type f -name "*.sh" -exec chmod 744 {} \;
 # Install some dependencies
 pip install -U spacy
 python -m spacy download en
-python -m spacy download de
 pip install -r requirements.txt
 
 echo "Setting up Story Cloze dataset"

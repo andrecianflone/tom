@@ -4,6 +4,7 @@ LM on the Naive Psych story dataset
 import math
 import time
 import os
+import sys
 import argparse
 import pickle
 import torch
@@ -125,21 +126,17 @@ def generate_sentence(model, sentence, src, trg):
     return translation, attention
 
 def main(args):
-    #####################################
-    # DATA and MODEL
-    #####################################
+    # Get data and model
     train_iterator, valid_iterator, test_iterator, model, src, trg =\
                                                         get_data_model(args)
 
-    #####################################
-    # TRAIN LOOP
-    #####################################
     best_valid_loss = float('inf')
     best_valid_epoch = 0
     optimizer = optim.Adam(model.parameters())
     pad_idx = src.vocab.stoi['<pad>']
     criterion = nn.CrossEntropyLoss(ignore_index = pad_idx)
 
+    # Main loop
     for epoch in range(args.max_epochs):
         start_time = time.time()
 
@@ -160,9 +157,7 @@ def main(args):
         print(f'\tTrain Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f}')
         print(f'\t Val. Loss: {valid_loss:.3f} |  Val. PPL: {math.exp(valid_loss):7.3f}')
 
-    #####################################
-    # POST-TRAINING EVAL
-    #####################################
+    # Post training eval on test
     model.load_state_dict(torch.load(args.save_path))
     test_loss = evaluate(model, test_iterator, criterion)
     print('****RESULTS****')
@@ -170,6 +165,7 @@ def main(args):
     print(f'| Test Loss with best val model: {test_loss:.3f} | Test PPL: {math.exp(test_loss):7.3f} | At epoch: {best_valid_epoch} ')
 
 if __name__ == '__main__':
+    print(f"Script launched with :\n{' '.join(sys.argv)}")
     parser = argparse.ArgumentParser(description='')
     add = parser.add_argument
     add('--batch_size', type=int, default=64, metavar='N',

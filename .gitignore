@@ -7,10 +7,8 @@ simple_lm/data
 *.nfs*
 *example.txt
 *old_main.py
-*results*
 .data/
 saved/
 saved_models/
 sync_repo.sh
 debug*
-run.sh
