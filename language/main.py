@@ -1,5 +1,9 @@
 """
 LM on the Naive Psych story dataset
+
+Beam search:
+    AllenNLP: https://allenai.github.io/allennlp-docs/api/allennlp.nn.beam_search.html
+    OpenNMT: https://github.com/OpenNMT/OpenNMT-py/blob/master/onmt/translate/beam.py
 """
 import math
 import time
@@ -81,10 +85,10 @@ def get_data_model(args):
     eos_idx = trg.vocab.stoi['<eos>']
     attn = Attention(args.enc_dim, args.dec_dim)
     enc = Encoder(input_dim, args.emb_dim, args.enc_dim, args.dec_dim,
-                                                args.dropout, src.vocab.stoi)
+                                args.dropout, src.vocab.stoi, src.vocab.itos)
     dec = Decoder(output_dim, args.emb_dim, args.enc_dim, args.dec_dim,
-                                            args.dropout, attn, trg.vocab.stoi)
-    model = Seq2Seq(enc, dec, pad_idx, sos_idx, eos_idx, device,
+                            args.dropout, attn, trg.vocab.stoi, trg.vocab.itos)
+    model = Seq2Seq(args, enc, dec, pad_idx, sos_idx, eos_idx, device,
                                 args.use_pretrained_embeddings, loaded_vectors,
                                 args.trainable_embeddings).to(device)
 
@@ -125,6 +129,7 @@ def generate_sentence(model, sentence, src, trg):
     translation, attention = translation[1:], attention[1:]
     return translation, attention
 
+@utils.log_time_delta
 def main(args):
     # Get data and model
     train_iterator, valid_iterator, test_iterator, model, src, trg =\
@@ -137,7 +142,7 @@ def main(args):
     criterion = nn.CrossEntropyLoss(ignore_index = pad_idx)
 
     # Main loop
-    for epoch in range(args.max_epochs):
+    for epoch in range(args.num_epochs):
         start_time = time.time()
 
         train_loss = train(args, model, train_iterator, optimizer, criterion, args.grad_clip)
@@ -168,6 +173,8 @@ if __name__ == '__main__':
     print(f"Script launched with :\n{' '.join(sys.argv)}")
     parser = argparse.ArgumentParser(description='')
     add = parser.add_argument
+
+    # Training settings
     add('--batch_size', type=int, default=64, metavar='N',
                         help='batch size')
     add('--seed', type=int, default=1111,
@@ -176,23 +183,30 @@ if __name__ == '__main__':
                         help='encoder hidden size')
     add('--dec_dim', type=int, default=256, metavar='N',
                         help='decoder hidden size')
-    add('--emb_dim', type=int, default=300, metavar='N',
-                        help='embedding size')
     add('--dropout', type=float, default=0.5,
                         help='dropout applied to layers (0 = no dropout)')
     add('--grad_clip', type=float, default=1.0,
                         help='Gradient norm clip')
-    add('--save', action='store_true', default=True,
-                        help='Whether to save the model while training')
-    add('--saved_model_name', type=str, default='naive.pt')
-    add('--max_epochs', type=int, default=15,
+    add('--num_epochs', type=int, default=15,
                         help='upper epoch limit')
     add('--max_batches', type=int, default=None,
                         help='Max batches per epoch, for debugging (default None)')
-    add('--prepared_data', type=str, default='.data/naive_data.pickle',
-                        help='path of prepared data')
-    add('--expanded_dataset', action='store_true', default=False,
-                        help='Expanded Naive dataset')
+
+    # Save model
+    add('--save', action='store_true', default=True,
+                        help='Whether to save the model while training')
+    add('--saved_model_name', type=str, default='naive.pt')
+
+    # Task
+    add('--emb_dim', type=int, default=300, metavar='N',
+                        help='embedding size')
+    add('--label_cond', action='store_true', default=True,
+                        help='Label conditioning')
+    add('--generate', action='store_true', default=False,
+                        help='Inference test')
+    # Embeddings
+    add('--embedding_type', default=None, choices=['glove', 'elmo'],
+                        help='Embedding type (default: %(default)s)')
     add('--use_pretrained_embeddings', action='store_true',
                 default=False, help='Use pretrained embeddings such as Glove')
     add('--trainable_embeddings', action='store_true',
@@ -200,16 +214,16 @@ if __name__ == '__main__':
     add('--embeddings_path', type=str,
                         default='.data/embeddings/glove.6B.300d.txt',
                         help='Glove embeddings path')
-    add('--label_cond', action='store_true', default=True,
-                        help='Label conditioning')
 
-    add('--generate', action='store_true', default=False,
-                        help='Inference test')
     # Datasets
     add('--with_emotions', action='store_true', default=False,
                         help='Use the source datasets with emotions')
     add('--single_vocab', action='store_true', default=False,
                         help='Same vocab for encoder and decoder')
+    add('--prepared_data', type=str, default='.data/naive_data.pickle',
+                        help='path of prepared data')
+    add('--expanded_dataset', action='store_true', default=False,
+                        help='Expanded Naive dataset')
 
     args = parser.parse_args()
 

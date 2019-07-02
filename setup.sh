@@ -12,8 +12,7 @@ python -m spacy download en
 pip install -r requirements.txt
 
 echo "Setting up Story Cloze dataset"
-cd $root_dir
-bash setup_scripts/download_story_cloze.sh $root_dir/language/.data/stories/
+bash $root_dir/setup_scripts/download_story_cloze.sh $root_dir/language/.data/stories/
 
 echo "Setting up Naive Psychology dataset"
 cd $root_dir
@@ -26,5 +25,4 @@ naive_target=$naive_dir/torchtext
 python language/data.py --create_naive --commonsense_location $naive_dir --commonsense_target $naive_target
 
 echo "Getting Glove embeddings"
-cd $root_dir
-bash setup_scripts/download_glove.sh $root_dir/language/.data/embeddings/
+bash $root_dir/setup_scripts/download_glove.sh $root_dir/language/.data/embeddings/

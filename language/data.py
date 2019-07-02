@@ -14,7 +14,7 @@ from torchtext.datasets import TranslationDataset
 from torchtext.data import Dataset
 import spacy
 from torchtext.data import Field, BucketIterator
-from utils import log_time_delta
+from utils import log_seconds_delta
 from tqdm import tqdm
 import numpy as np
 
@@ -283,7 +283,7 @@ class NaiveDataset(TranslationDataset):
         return super(NaiveDataset, cls).splits(
             exts, fields, path, root, train, validation, test, **kwargs)
 
-@log_time_delta
+@log_seconds_delta
 def vectors_lookup(vectors,vocab,dim):
     """
     Return vector np array, mapping word idx to embedding. Each missing
@@ -305,7 +305,7 @@ def vectors_lookup(vectors,vocab,dim):
     print( 'word in embedding',count)
     return embedding
 
-@log_time_delta
+@log_seconds_delta
 def load_text_vec(alphabet,filename="",embedding_size=-1):
     vectors = {}
     with open(filename,encoding='utf-8') as f:
@@ -384,8 +384,13 @@ def load_naive(args):
         # `loaded_vectors` is a dictionary of words to embeddings
         # To be sure to include entire vocab, we save the embeddings for the
         # combined vocab
-        loaded_vectors, embedding_size = load_text_vec(str_to_idx_combined,
+        if "elmo" not in args.embedding_type:
+            loaded_vectors, embedding_size = load_text_vec(str_to_idx_combined,
                                                         args.embeddings_path)
+        else:
+            loaded_vectors = []
+            embedding_size = 1024
+
         args.emb_dim = embedding_size
 
         # Pickle Field vocab for later faster load

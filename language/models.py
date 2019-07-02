@@ -3,6 +3,36 @@ import torch.nn as nn
 import torch.nn.functional as F
 import random
 import data
+from allennlp.modules.elmo import Elmo, batch_to_ids
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+class ElmoEmbedding(nn.Module):
+    """
+    Custom Embedding class to handle funky ELMo
+
+    ELMo does not have an embedding matrix, embeddings are generated on the
+    fly, aka contextual embeddings. Under the hood, ELMo parses raw text and
+    returns token embedding of size 1024, which is the average of 3 layers
+    """
+    def __init__(self, itos):
+        super(ElmoEmbedding, self).__init__()
+
+        options_file = "https://allennlp.s3.amazonaws.com/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json"
+        weight_file = "https://allennlp.s3.amazonaws.com/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5"
+
+        print("Loading ELMo class, may take awhile if 1st time")
+        self.elmo = Elmo(options_file, weight_file, 1, dropout=0)
+        self.itos = itos
+
+    def forward(self, x):
+        sentences = []
+        for sent in x:
+            sentences.append([self.itos[t] for t in sent])
+        character_ids = batch_to_ids(sentences).to(device)
+        embeddings = self.elmo(character_ids)
+        emb = embeddings['elmo_representations'][0]
+        return emb
 
 class RNNModel(nn.Module):
     """
@@ -73,7 +103,7 @@ class RNNModel(nn.Module):
 # https://github.com/bentrevett/pytorch-seq2seq
 class Encoder(nn.Module):
     def __init__(self, input_dim, emb_dim, enc_hid_dim, dec_hid_dim, dropout,
-                                                                str_to_idx):
+                                            str_to_idx, itos):
         super().__init__()
 
         self.input_dim = input_dim
@@ -84,6 +114,7 @@ class Encoder(nn.Module):
         self.embedding = nn.Embedding(input_dim, emb_dim)
         self.rnn = nn.GRU(emb_dim, enc_hid_dim, bidirectional = True)
         self.dropout = nn.Dropout(dropout)
+        self.itos = itos
         self.str_to_idx = str_to_idx
 
     def forward(self, src, src_len):
@@ -144,7 +175,7 @@ class Attention(nn.Module):
 
 class Decoder(nn.Module):
     def __init__(self, output_dim, emb_dim, enc_hid_dim, dec_hid_dim, dropout,
-                                                        attention, str_to_idx):
+                                        attention, str_to_idx, itos):
         super().__init__()
 
         self.emb_dim = emb_dim
@@ -159,6 +190,7 @@ class Decoder(nn.Module):
         self.out = nn.Linear((enc_hid_dim * 2) + dec_hid_dim + emb_dim,
                                                                     output_dim)
         self.dropout = nn.Dropout(dropout)
+        self.itos = itos
         self.str_to_idx = str_to_idx
 
     def forward(self, input, hidden, encoder_outputs, mask):
@@ -214,10 +246,9 @@ def init_weights(m):
             nn.init.constant_(param.data, 0)
 
 class Seq2Seq(nn.Module):
-    def __init__(self, encoder, decoder, pad_idx, sos_idx, eos_idx, device,
+    def __init__(self, args, encoder, decoder, pad_idx, sos_idx, eos_idx, device,
                     use_embeddings, loaded_vectors, trainable_embeddings):
         """
-
         Args:
             loaded_vectors (dict) : all words in data mapped to embedding
         """
@@ -237,9 +268,12 @@ class Seq2Seq(nn.Module):
         # Initialize weights
         self.apply(init_weights)
 
-        # If use embeddings, initialize weights for enc/dec
-        if use_embeddings:
+        # If use embeddings, prepare enc/dec embeddings
+        if use_embeddings and args.embedding_type == "elmo":
+            self.encoder.embedding = ElmoEmbedding(self.encoder.itos)
+            self.decoder.embedding = ElmoEmbedding(self.decoder.itos)
 
+        elif use_embeddings:
             # np array of idx-to-embedding
             enc_emb = data.vectors_lookup(loaded_vectors,encoder.str_to_idx,
                                                             encoder.emb_dim)

@@ -32,13 +32,14 @@ Using Glove embeddings. By default, pretrained embeddings are fixed
 python main.py --use_pretrained_embeddings --prepared_data .data/naive_data_emb_100.pickle --embeddings_path .data/embeddings/glove.6B.100d.txt --saved_model_name naive_100d.pt
 ```
 
-emb size | epoch | val ppl | test ppl | param count
----      | ---   | ---     | ---      | ---
-50       | 6     | 164.726 | 167.316  | 5,348,255
-100      | 6     | 166.119 | 168.330  | 7,295,955
-200      | 3     | 165.831 | 168.423  | 8,191,355
-300      | 3     | 157.842 | 159.932  | 10,086,755
-300-840B | 3     | 158.089 | 161.658  | 11,086,755
+emb size       | epoch | val ppl | test ppl | param count
+---            | ---   | ---     | ---      | ---
+50             | 6     | 164.726 | 167.316  | 5,348,255
+100            | 6     | 166.119 | 168.330  | 7,295,955
+200            | 3     | 165.831 | 168.423  | 8,191,355
+300            | 3     | 157.842 | 159.932  | 10,086,755
+300-840B Glove | 3     | 158.089 | 161.658  | 11,086,755
+1024-ELMo      | 4     | 159.842 | 160.970  | 10,867,123
 
 `301-840B` are the 300d embeddings trained on 840B tokens.
 
