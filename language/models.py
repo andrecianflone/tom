@@ -4,8 +4,86 @@ import torch.nn.functional as F
 import random
 import data
 from allennlp.modules.elmo import Elmo, batch_to_ids
+from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
+from pytorch_pretrained_bert import OpenAIGPTTokenizer, OpenAIGPTModel, OpenAIGPTLMHeadModel
+from pytorch_pretrained_bert import GPT2Tokenizer, GPT2Model, GPT2LMHeadModel
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+class GPT2(nn.Module):
+    # Load pre-trained model tokenizer (vocabulary)
+    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+
+    # Encode some inputs
+    text_1 = "Who was Jim Henson ?"
+    text_2 = "Jim Henson was a puppeteer"
+    indexed_tokens_1 = tokenizer.encode(text_1)
+    indexed_tokens_2 = tokenizer.encode(text_2)
+
+    # Convert inputs to PyTorch tensors
+    tokens_tensor_1 = torch.tensor([indexed_tokens_1])
+    tokens_tensor_2 = torch.tensor([indexed_tokens_2])
+
+class GPTEmbedding(nn.Module):
+
+    def __init__(self, itos):
+        super(GPTEmbedding, self).__init__()
+        # Load pre-trained model tokenizer (vocabulary)
+        self.tokenizer = OpenAIGPTTokenizer.from_pretrained('openai-gpt')
+        self.itos = itos
+
+        # Load pre-trained model (weights)
+        print("Loading GPT class, may take awhile if 1st time")
+        model = OpenAIGPTModel.from_pretrained('openai-gpt')
+        model.to(device)
+
+    def forward(self, x):
+        sentences = []
+        for sent in x:
+            sentences.append([self.itos[t] for t in sent])
+
+        # Tokenized input
+        # text = "Who was Jim Henson ? Jim Henson was a puppeteer"
+        tokenized_text = self.tokenizer.tokenize(sentences)
+
+        # Convert token to vocabulary indices
+        indexed_tokens = self.tokenizer.convert_tokens_to_ids(tokenized_text)
+
+        # Convert inputs to PyTorch tensors
+        tokens_tensor = torch.tensor([indexed_tokens])
+
+        model.eval()
+
+        # If you have a GPU, put everything on cuda
+        tokens_tensor = tokens_tensor.to(device)
+
+        # Predict hidden states features for each layer
+        with torch.no_grad():
+               hidden_states = model(tokens_tensor)
+        return hidden_states
+
+class Bert(nn.Module):
+    """
+    TODO
+    Get Bert hidden vectors, from HuggingFace
+    see:
+    https://github.com/huggingface/pytorch-pretrained-BERT#bert
+    """
+    def __init__(self, itos):
+        super(Bert, self).__init__()
+
+        self.itos = itos
+        model_path = ".data/"
+        self.bert = BERT_CLASS.from_pretrained(PRE_TRAINED_MODEL_NAME_OR_PATH, cache_dir=None, from_tf=False, state_dict=None, *input, **kwargs)
+
+    def forward(self, x):
+        # Load pre-trained model tokenizer (vocabulary)
+        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        sentences = []
+        for sent in x:
+            sentences.append([self.itos[t] for t in sent])
+        tokenized_text = tokenizer.tokenize(text)
+
 
 class ElmoEmbedding(nn.Module):
     """
@@ -26,13 +104,16 @@ class ElmoEmbedding(nn.Module):
         self.itos = itos
 
     def forward(self, x):
+        # Permute in order to loop sentences properly
+        x = x.permute(1,0)
         sentences = []
         for sent in x:
             sentences.append([self.itos[t] for t in sent])
         character_ids = batch_to_ids(sentences).to(device)
         embeddings = self.elmo(character_ids)
         emb = embeddings['elmo_representations'][0]
-        return emb
+        emb = emb.permute(1,0,2)
+        return emb.detach()
 
 class RNNModel(nn.Module):
     """
@@ -270,8 +351,13 @@ class Seq2Seq(nn.Module):
 
         # If use embeddings, prepare enc/dec embeddings
         if use_embeddings and args.embedding_type == "elmo":
+            # TODO: these should be a buffer so not part of params
             self.encoder.embedding = ElmoEmbedding(self.encoder.itos)
             self.decoder.embedding = ElmoEmbedding(self.decoder.itos)
+
+        elif use_embeddings and args.embedding_type == "gpt":
+            self.encoder.embedding = GPTEmbedding(self.encoder.itos)
+            self.decoder.embedding = GPTEmbedding(self.decoder.itos)
 
         elif use_embeddings:
             # np array of idx-to-embedding
@@ -344,4 +430,5 @@ class Seq2Seq(nn.Module):
                 return outputs[:t], attentions[:t]
 
         return outputs, attentions
+
 

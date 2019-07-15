@@ -16,9 +16,11 @@ import torch.nn as nn
 import torch.optim as optim
 import data
 from data import tokenize_en
-from models import Encoder, Decoder, Attention, Seq2Seq
 import utils
+import numpy as np
+from tqdm import trange
 
+from pytorch_pretrained_bert import GPT2LMHeadModel, GPT2Tokenizer
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def train(args, model, iterator, optimizer, criterion, clip):
@@ -47,6 +49,46 @@ def train(args, model, iterator, optimizer, criterion, clip):
         epoch_loss += loss.item()
     return epoch_loss / len(iterator)
 
+def evaluate_ppl_gpt(args):
+    """
+    Evaluate on raw text, use this with GPT which has its own tokenizer
+    """
+    if args.expanded_dataset:
+        path = ".data/stories/story_commonsense/torchtext_expanded"
+    else:
+        path = ".data/stories/story_commonsense/torchtext"
+    # Data
+    test_src = [line.rstrip('\n') for line in open(path+"/test.src")]
+    test_trg = [line.rstrip('\n') for line in open(path+"/test.trg")]
+
+    # Model
+    enc = GPT2Tokenizer.from_pretrained('gpt2')
+    model = GPT2LMHeadModel.from_pretrained('gpt2')
+    model.to(device)
+    model.eval()
+    loss = 0
+    batch_size = 1
+
+    for i in trange(len(test_src)):
+        src, trg = test_src[i], test_trg[i]
+        context = enc.encode(src)
+        target = enc.encode(trg)
+        length = len(target)
+
+        # Generate prediction
+        out = utils.sample_sequence(model, length, batch_size=1,
+                                    context=context, top_k=10, device=device)
+        out = out[:, len(context):]
+
+        # Get model loss
+        target = torch.tensor([target]).to(device)
+        with torch.no_grad():
+            #pred, past  = model(out)
+            l = model(out, lm_labels=target)
+            loss += float(l)
+    av_loss = loss / len(loss)
+    print(f"ppl: {math.exp(av_loss):.04f}")
+
 def evaluate(model, iterator, criterion):
     model.eval()
     epoch_loss = 0
@@ -69,38 +111,13 @@ def evaluate(model, iterator, criterion):
             epoch_loss += loss.item()
     return epoch_loss / len(iterator)
 
-def get_data_model(args):
-    # Get data
-    train_iterator, valid_iterator, test_iterator, src, trg, loaded_vectors =\
-                                                        data.load_naive(args)
-    print(f"Number of training examples: {len(train_iterator.dataset.examples)}")
-    print(f"Number of validation examples: {len(valid_iterator.dataset.examples)}")
-    print(f"Number of testing examples: {len(test_iterator.dataset.examples)}")
-
-    # Create model
-    input_dim = len(src.vocab)
-    output_dim = len(trg.vocab)
-    pad_idx = src.vocab.stoi['<pad>']
-    sos_idx = trg.vocab.stoi['<sos>']
-    eos_idx = trg.vocab.stoi['<eos>']
-    attn = Attention(args.enc_dim, args.dec_dim)
-    enc = Encoder(input_dim, args.emb_dim, args.enc_dim, args.dec_dim,
-                                args.dropout, src.vocab.stoi, src.vocab.itos)
-    dec = Decoder(output_dim, args.emb_dim, args.enc_dim, args.dec_dim,
-                            args.dropout, attn, trg.vocab.stoi, trg.vocab.itos)
-    model = Seq2Seq(args, enc, dec, pad_idx, sos_idx, eos_idx, device,
-                                args.use_pretrained_embeddings, loaded_vectors,
-                                args.trainable_embeddings).to(device)
-
-    print(f'The model has {utils.count_parameters(model):,} trainable parameters')
-    return train_iterator, valid_iterator, test_iterator, model, src, trg
-
 def inference(args):
     """
     Load data,  model, and generate a sentence based on context.
     """
-    train_iterator, valid_iterator, test_iterator, model, src, trg =\
-                                                        get_data_model(args)
+    train_iterator, valid_iterator, test_iterator, src, trg, vec=\
+                                                        data.get_data(args)
+    model = utils.create_seq2seq_model(args, src, trg, vec)
     model.load_state_dict(torch.load(args.save_path))
 
     # Sample sentence from the test set
@@ -132,8 +149,9 @@ def generate_sentence(model, sentence, src, trg):
 @utils.log_time_delta
 def main(args):
     # Get data and model
-    train_iterator, valid_iterator, test_iterator, model, src, trg =\
-                                                        get_data_model(args)
+    train_iterator, valid_iterator, test_iterator, src, trg, vec =\
+                                                        data.get_data(args)
+    model = utils.create_seq2seq_model(args, src, trg, vec)
 
     best_valid_loss = float('inf')
     best_valid_epoch = 0
@@ -145,7 +163,8 @@ def main(args):
     for epoch in range(args.num_epochs):
         start_time = time.time()
 
-        train_loss = train(args, model, train_iterator, optimizer, criterion, args.grad_clip)
+        train_loss = train(args, model, train_iterator, optimizer,
+                                                    criterion, args.grad_clip)
         valid_loss = evaluate(model, valid_iterator, criterion)
 
         end_time = time.time()
@@ -192,12 +211,16 @@ if __name__ == '__main__':
     add('--max_batches', type=int, default=None,
                         help='Max batches per epoch, for debugging (default None)')
 
-    # Save model
+    # model
     add('--save', action='store_true', default=True,
                         help='Whether to save the model while training')
     add('--saved_model_name', type=str, default='naive.pt')
 
+
     # Task
+    add('--task', default='lm_train', choices=['lm_train', 'lm_test',
+                        'generate', 'classification'],
+                        help='Which task to do (default: %(default)s)')
     add('--emb_dim', type=int, default=300, metavar='N',
                         help='embedding size')
     add('--label_cond', action='store_true', default=True,
@@ -205,7 +228,7 @@ if __name__ == '__main__':
     add('--generate', action='store_true', default=False,
                         help='Inference test')
     # Embeddings
-    add('--embedding_type', default=None, choices=['glove', 'elmo'],
+    add('--embedding_type', default='None', choices=['glove', 'elmo', 'gpt', 'bert'],
                         help='Embedding type (default: %(default)s)')
     add('--use_pretrained_embeddings', action='store_true',
                 default=False, help='Use pretrained embeddings such as Glove')
@@ -218,7 +241,7 @@ if __name__ == '__main__':
     # Datasets
     add('--with_emotions', action='store_true', default=False,
                         help='Use the source datasets with emotions')
-    add('--single_vocab', action='store_true', default=False,
+    add('--single_vocab', action='store_true', default=True,
                         help='Same vocab for encoder and decoder')
     add('--prepared_data', type=str, default='.data/naive_data.pickle',
                         help='path of prepared data')
@@ -233,22 +256,29 @@ if __name__ == '__main__':
 
     # Maybe source with emotions
     if args.with_emotions:
-        print("Will train with emotions")
+        print("Not using emotions")
         args.src_ext = ".src_meta"
     else:
-        print("Will not train with emotions")
+        print("Using emotions")
         args.src_ext = ".src"
     args.trg_ext = ".trg"
 
     args.device = device
     # Set seeds
     # random.seed(args.seed)
+    np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = True
 
     # Start
-    if args.generate:
+    if args.task == "generate":
         inference(args)
-    else:
+    elif args.task == "lm_train":
         main(args)
+    elif args.task == "lm_test":
+        print("Evaluating test set with GPT2")
+        evaluate_ppl_gpt(args)
+    elif args.task == "classificaiton":
+        classify(args)
 

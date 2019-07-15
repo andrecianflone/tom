@@ -53,18 +53,36 @@ params:  17,479,109
 | Best Val. Loss: 5.287 | Best Val. PPL: 197.695 | At epoch: 2
 | Test Loss with best val model: 5.277 | Test PPL: 195.845 | At epoch: 2
 
-- Expanded, with emotions
+Expanded, with emotions
 params: 17,479,109
 | Best Val. Loss: 5.293 | Best Val. PPL: 198.854 | At epoch: 2
 | Test Loss with best val model: 5.291 | Test PPL: 198.584 | At epoch: 2
 
-- *Expanded dataset with embeddings
+Expanded dataset with embeddings
 | Best Val. Loss: 4.868 | Best Val. PPL: 130.030 | At epoch: 2
 | Test Loss with best val model: 4.869 | Test PPL: 130.212 | At epoch: 2
 
-- Expanded dataset, with embeddings, with emotions
+Expanded dataset, with embeddings, with emotions
 params: 10,549,655
 | Best Val. Loss: 4.865 | Best Val. PPL: 129.685 | At epoch: 1
 | Test Loss with best val model: 4.872 | Test PPL: 130.645 | At epoch: 1
 
+ Expanded with ELMo
+main.py --expanded_dataset --use_pretrained_embeddings --embedding_type elmo --prepared_data .data/naive_data_elmo.pickle --saved_model_name elmo_expanded.pt --emb_dim 1024Will not train with emotions
 
+Epoch: 04 | Time: 46m 39s
+Train Loss: 4.020 | Train PPL:  55.700
+Val. Loss: 4.822 |  Val. PPL: 124.185
+
+
+GPT2 av ppl on normal dataset:
+```
+python  main.py --task lm_test
+```
+10.2006.
+
+GPT2 av ppl on expanded  dataset:
+```
+python  main.py --task lm_test --expanded_dataset
+```
+10.2123

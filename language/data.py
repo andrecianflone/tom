@@ -1,8 +1,11 @@
 import os
+import sys
 import shutil
+from pprint import pprint
 import json
 from collections import Counter, OrderedDict
 from itertools import chain
+from random import shuffle
 import argparse
 import random
 from io import open
@@ -14,9 +17,11 @@ from torchtext.datasets import TranslationDataset
 from torchtext.data import Dataset
 import spacy
 from torchtext.data import Field, BucketIterator
-from utils import log_seconds_delta
 from tqdm import tqdm
 import numpy as np
+import data_stats
+from data_stats import maybe_extend
+from tabulate import tabulate
 
 class Dictionary(object):
     def __init__(self):
@@ -31,7 +36,6 @@ class Dictionary(object):
 
     def __len__(self):
         return len(self.idx2word)
-
 
 class Corpus(object):
     def __init__(self, path):
@@ -65,15 +69,15 @@ class Corpus(object):
         return ids
 
 class NaivePsychCorpus():
-    def __init__(self, path, test_percent, expanded_dataset=False):
+    def __init__(self, path, expanded_dataset=False):
         self.dictionary = Dictionary()
-        self.train, self.valid, self.test = self.read_data(path, test_percent)
+        self.train, self.valid, self.test = self.read_data(path)
         self.name = "naive"
         self.expanded_dataset = expanded_dataset
         self.datasets = {
+                "test":self.test,
                 "train": self.train,
-                "val":self.valid,
-                "test":self.test}
+                "val":self.valid}
 
     def splits(self):
         train, valid, test =\
@@ -81,12 +85,159 @@ class NaivePsychCorpus():
                                                       self.tokenize(self.test)
         return train, valid, test
 
-    def read_data(self, path, test_percent):
+    def read_data(self, path):
         with open(path, 'r') as f:
             data = json.load(f)
 
         train, valid, test = self.split_dict_label(data)
         return train, valid, test
+
+    def fifth_sent_stats(self):
+        stats = data_stats.fifth_sent_stats(self.datasets)
+        df = data_stats.dicts_to_pandas(stats)
+        md = tabulate(df, headers='keys', tablefmt='pipe')
+        print("Fifth sentence stats")
+        print("Number of stories where fifth sentence contains an example of")
+        print(md)
+
+    def majority_vote(self, ls):
+        """
+        Return element in ls most common, random selection if multiple
+        """
+        # Delete none
+        if 'none' in ls:
+            ls.remove('none')
+        if len(ls) == 0:
+            return None
+
+        cnt = Counter(ls)
+        # List of tuple with count
+        c = cnt.most_common()
+
+        # Max count
+        classes = []
+        max_c = 0
+        for cl, count in c:
+            if count > max_c:
+                max_c = count
+
+        candidates = [w[0] for w in filter(lambda x: x[1] == max_c, c)]
+
+        # Random select
+        shuffle(candidates)
+        return candidates[0]
+
+    def extract_line_class(self, data):
+        source_maslow = []
+        source_reiss = []
+        maslow = []
+        reiss = []
+        plutchik = []
+        # Loop stories in dataset
+        for st_id, story in data.items():
+            # Accumulate lines per story
+            line_text = ""
+            # Loop lines, make sure they are in order
+            sorted_lines = sorted(story['lines'].items(), key=lambda kv: kv[0])
+            for idx, line in sorted_lines:
+                maslow_ls = []
+                reiss_ls = []
+                plutchik_ls = []
+                # Loop characters to get the one present
+                for char, char_data in line['characters'].items():
+                    # Check if character appears
+                    if char_data["app"] == True:
+                        # Motivation
+                        for annotator, category in char_data["motiv"].items():
+                            maybe_extend(maslow_ls, category, 'maslow')
+                            maybe_extend(reiss_ls, category, 'reiss')
+                        break
+                        # Emotion
+                        # for annotator, emo in char_data["emotion"].items():
+                            # maybe_extend(plutchik_ls, emo, 'plutchik')
+
+                # Get majority votes
+                maslow_vote = self.majority_vote(maslow_ls)
+                reiss_vote = self.majority_vote(reiss_ls)
+                # plutchik_vote = self.majority_vote(plutchik_ls)
+
+                # Add line to story text
+                line_text += " " + line['text']
+
+                # Save data if label exists
+                if maslow_vote is not None:
+                    source_maslow.append(line_text)
+                    maslow.append(maslow_vote)
+                if reiss_vote is not None:
+                    source_reiss.append(line_text)
+                    reiss.append(reiss_vote)
+                # plutchik.append(plutchik_vote)
+        return source_maslow, source_reiss, maslow, reiss
+
+    def create_classification_files(self, path):
+        """
+        Extract emotion/motivations for each sentence
+        """
+        print('Get raw data from dictionary datasets')
+        source_val_maslow, source_val_reiss, maslow_val, reiss_val = \
+                                self.extract_line_class(self.datasets['val'])
+        source_test_maslow, source_test_reiss, maslow_test, reiss_test = \
+                                self.extract_line_class(self.datasets['test'])
+
+        # Create vocab to convert to integer
+        maslow_dict = Dictionary()
+        reiss_dict = Dictionary()
+
+        for w in maslow_val:
+            maslow_dict.add_word(w)
+        for w in maslow_test:
+            maslow_dict.add_word(w)
+        for w in reiss_val:
+            reiss_dict.add_word(w)
+        for w in reiss_test:
+            reiss_dict.add_word(w)
+
+        # Random split into 80/20 train/val
+        data = list(zip(source_val_maslow, maslow_val))
+        data_train, data_val = data_stats.split_list_percent(data, 0.20)
+        source_train_maslow, maslow_train = zip(*data_train)
+        source_val_maslow, maslow_val = zip(*data_val)
+
+        data = list(zip(source_val_reiss, reiss_val))
+        data_train, data_val = data_stats.split_list_percent(data, 0.20)
+        source_train_reiss, reiss_train = zip(*data_train)
+        source_val_reiss, reiss_val = zip(*data_val)
+
+        print('Saving files to ', path)
+        if os.path.exists(path):
+            shutil.rmtree(path)
+        os.makedirs(path)
+        os.makedirs(path + '/maslow')
+        os.makedirs(path + '/reiss')
+
+        # train
+        assert len(source_train_maslow) == len(maslow_train)
+        data_stats.list_to_file(source_train_maslow, path + '/maslow/train.src')
+        data_stats.list_to_file(maslow_train, path + '/maslow/train.trg')
+        assert len(source_train_reiss) == len(reiss_train)
+        data_stats.list_to_file(source_train_reiss, path + '/reiss/train.src')
+        data_stats.list_to_file(reiss_train, path + '/reiss/train.trg')
+
+        # val
+        assert len(source_val_maslow) == len(maslow_val)
+        data_stats.list_to_file(source_val_maslow, path + '/maslow/val.src')
+        data_stats.list_to_file(maslow_val, path + '/maslow/val.trg')
+        assert len(source_val_reiss) == len(reiss_val)
+        data_stats.list_to_file(source_val_reiss, path + '/reiss/val.src')
+        data_stats.list_to_file(reiss_val, path + '/reiss/val.trg')
+
+        # test
+        assert len(source_test_maslow) == len(maslow_test)
+        data_stats.list_to_file(source_test_maslow, path + '/maslow/test.src')
+        data_stats.list_to_file(maslow_test, path + '/maslow/test.trg')
+        assert len(source_test_reiss) == len(reiss_test)
+        data_stats.list_to_file(source_test_reiss, path + '/reiss/test.src')
+        data_stats.list_to_file(reiss_test, path + '/reiss/test.trg')
 
     def split_dict_label(self, d, shuffle=False):
         """
@@ -102,28 +253,11 @@ class NaivePsychCorpus():
                 valid[idkey] = story
             elif story["partition"] == 'test':
                 test[idkey] = story
+            else:
+                ValueError("story partition is not train/dev/test")
         return train, valid, test
 
-    def split_dict_percent(self, d, percent, shuffle=True):
-        """
-        Return two dictionaries with `percent` being size of smaller dict
-        """
-        keys = list(d.keys())
-        if shuffle:
-            random.shuffle(keys)
-        n = int(len(keys)*percent)
-        d1_keys = keys[:n]
-        d2_keys = keys[-n:]
-        d1 = {}
-        d2 = {}
-        for key, value in d.items():
-            if key in d1_keys:
-                d1[key] = value
-            else:
-                d2[key] = value
-        return d1, d2
-
-    def create_torchtext_files(self, path):
+    def create_lm_torchtext_files(self, path):
         """
         Saves train.src and train.trg files for train/test/valid
         To be used with torchtext TranslationDataset object
@@ -131,35 +265,27 @@ class NaivePsychCorpus():
         Args:
             path (str): dir where to save the files
         """
-        if not os.path.exists(path):
-            os.makedirs(path)
-        else:
+        if os.path.exists(path):
             shutil.rmtree(path)
+        os.makedirs(path)
 
         for name, data in self.datasets.items():
-            src, trg, src_meta, trg_meta = self.extract_lines(data)
+            src, trg, src_meta, trg_meta = self.extract_lines(name, data)
             src_path = os.path.join(path, name + ".src")
             trg_path = os.path.join(path, name + ".trg")
             src_path_meta = os.path.join(path, name + ".src_meta")
             trg_path_meta = os.path.join(path, name + ".trg_meta")
-            self.list_to_file(src, src_path)
-            self.list_to_file(trg, trg_path)
-            self.list_to_file(src_meta, src_path_meta)
-            self.list_to_file(trg_meta, trg_path_meta)
+            data_stats.list_to_file(src, src_path)
+            data_stats.list_to_file(trg, trg_path)
+            data_stats.list_to_file(src_meta, src_path_meta)
+            data_stats.list_to_file(trg_meta, trg_path_meta)
 
-    def list_to_file(self, ls, path):
-        if os.path.exists(path):
-            os.remove(path)
-        with open(path, "w") as f:
-            for line in ls:
-                f.write(line+"\n")
-        print(f"Saved data to file {path}")
-
-    def extract_lines(self, d):
+    def extract_lines(self, name, d):
         """
         Extract all lines of text per story. Last line in speparate list.
 
         Args:
+            name (str): Dataset name
             d (dictionary): Contains all stories
             expanded_dataset: If true, will permute each story to create 5
                 samples: sentence 1 as source, sentence 2 as target; sentence
@@ -187,7 +313,7 @@ class NaivePsychCorpus():
                 context_meta.append(start_line_tag + sentence["text"]\
                                                         + emo_tag + emotions)
             # Determine if single source/target, or multiple
-            it = 1 if self.expanded_dataset else len(context)
+            it = 1 if self.expanded_dataset else len(context)-1
 
             # Source is 0 to target -1 sentences. Target is the last
             for i in range(it, len(context)):
@@ -199,6 +325,8 @@ class NaivePsychCorpus():
                 target_w_meta.append(context_meta[i])
 
         return source, target, source_w_meta, target_w_meta
+
+    # def get_line_motiv_maslow(self, d):
 
     def get_line_emotions(self, d):
         """
@@ -251,6 +379,7 @@ class NaivePsychCorpus():
         return ids
 
 class NaiveDataset(TranslationDataset):
+
     """
     Naive Psychology dataset implemented as a torchtext dataset. Inheriting
     from TranslationDataset since this is used for Seq2Seq like translation.
@@ -283,7 +412,7 @@ class NaiveDataset(TranslationDataset):
         return super(NaiveDataset, cls).splits(
             exts, fields, path, root, train, validation, test, **kwargs)
 
-@log_seconds_delta
+# @log_seconds_delta
 def vectors_lookup(vectors,vocab,dim):
     """
     Return vector np array, mapping word idx to embedding. Each missing
@@ -305,7 +434,7 @@ def vectors_lookup(vectors,vocab,dim):
     print( 'word in embedding',count)
     return embedding
 
-@log_seconds_delta
+# @log_seconds_delta
 def load_text_vec(alphabet,filename="",embedding_size=-1):
     vectors = {}
     with open(filename,encoding='utf-8') as f:
@@ -384,12 +513,15 @@ def load_naive(args):
         # `loaded_vectors` is a dictionary of words to embeddings
         # To be sure to include entire vocab, we save the embeddings for the
         # combined vocab
-        if "elmo" not in args.embedding_type:
-            loaded_vectors, embedding_size = load_text_vec(str_to_idx_combined,
-                                                        args.embeddings_path)
-        else:
+        if "elmo" in args.embedding_type:
             loaded_vectors = []
             embedding_size = 1024
+        elif "gpt" in args.embedding_type:
+            loaded_vectors = []
+            embedding_size = 1024
+        else:
+            loaded_vectors, embedding_size = load_text_vec(str_to_idx_combined,
+                                                        args.embeddings_path)
 
         args.emb_dim = embedding_size
 
@@ -462,13 +594,27 @@ def build_combined_vocab(field, *args, **kwargs):
     vocab = field.vocab_cls(counter, specials=specials, **kwargs)
     return vocab
 
+def get_data(args):
+    # Get data
+    train_iterator, valid_iterator, test_iterator, src, trg, loaded_vectors =\
+                                                        load_naive(args)
+    print(f"Number of training examples: {len(train_iterator.dataset.examples)}")
+    print(f"Number of validation examples: {len(valid_iterator.dataset.examples)}")
+    print(f"Number of testing examples: {len(test_iterator.dataset.examples)}")
+    return train_iterator, valid_iterator, test_iterator, src, trg, loaded_vectors
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Datasets')
     parser.add_argument('--create_naive', action='store_true',default=False,
                         help='Create the Naive dataset text files')
 
-    parser.add_argument('--create_naive_expanded', action='store_true',default=False,
+    parser.add_argument('--create_naive_expanded', action='store_true',
+                        default=False,
                         help='Create the Naive dataset and permute all samples')
+
+    parser.add_argument('--create_classification_files', action='store_true',
+                        default=False,
+                        help='Create the Naive classification dataset')
 
     parser.add_argument('--commonsense_location',
                         default=".data/stories/story_commonsense",
@@ -479,14 +625,25 @@ if __name__ == '__main__':
                         help='Where to save the naive torchtext data')
 
     args = parser.parse_args()
+
     if args.create_naive:
+        print("Creating the naive dataset")
         data_path = args.commonsense_location + '/json_version/annotations.json'
-        corpus = NaivePsychCorpus(data_path, 0.10)
-        corpus.create_torchtext_files(args.commonsense_target)
+        corpus = NaivePsychCorpus(data_path)
+        corpus.create_lm_torchtext_files(args.commonsense_target)
 
     if args.create_naive_expanded:
         data_path = args.commonsense_location + '/json_version/annotations.json'
-        corpus = NaivePsychCorpus(data_path, 0.10, True)
+        corpus = NaivePsychCorpus(data_path, True)
         args.commonsense_target = args.commonsense_target + "_expanded"
-        corpus.create_torchtext_files(args.commonsense_target)
+        corpus.create_lm_torchtext_files(args.commonsense_target)
+
+    args.create_classification_files = True
+    if args.create_classification_files:
+        data_path = args.commonsense_location + '/json_version/annotations.json'
+        corpus = NaivePsychCorpus(data_path)
+        path=".data/stories/story_commonsense/torchtext_class"
+        corpus.create_classification_files(path)
+        # corpus.fifth_sent_stats()
+
 

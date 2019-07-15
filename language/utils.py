@@ -1,7 +1,10 @@
 import torch
+import torch.nn.functional as F
 from functools import wraps
 import time
 from datetime import datetime
+from models import Encoder, Decoder, Attention, Seq2Seq
+from tqdm import trange
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -92,3 +95,62 @@ def log_seconds_delta(func):
         return ret
     return _deco
 
+def create_seq2seq_model(args, src, trg, loaded_vectors):
+    """
+
+    Args:
+        src: Field
+        trg: Field
+    """
+    input_dim = len(src.vocab)
+    output_dim = len(trg.vocab)
+    pad_idx = src.vocab.stoi['<pad>']
+    sos_idx = trg.vocab.stoi['<sos>']
+    eos_idx = trg.vocab.stoi['<eos>']
+    attn = Attention(args.enc_dim, args.dec_dim)
+    enc = Encoder(input_dim, args.emb_dim, args.enc_dim, args.dec_dim,
+                                args.dropout, src.vocab.stoi, src.vocab.itos)
+    dec = Decoder(output_dim, args.emb_dim, args.enc_dim, args.dec_dim,
+                            args.dropout, attn, trg.vocab.stoi, trg.vocab.itos)
+    model = Seq2Seq(args, enc, dec, pad_idx, sos_idx, eos_idx, device,
+                                args.use_pretrained_embeddings, loaded_vectors,
+                                args.trainable_embeddings).to(device)
+
+    print(f'The model has {count_parameters(model):,} trainable parameters')
+    return model
+
+def top_k_logits(logits, k):
+    """
+    Masks everything but the k top entries as -infinity (1e10).
+    Used to mask logits such that e^-infinity -> 0 won't contribute to the
+    sum of the denominator.
+    """
+    if k == 0:
+        return logits
+    else:
+        values = torch.topk(logits, k)[0]
+        batch_mins = values[:, -1].view(-1, 1).expand_as(logits)
+        return torch.where(logits < batch_mins, torch.ones_like(logits) * -1e10, logits)
+
+def sample_sequence(model, length, start_token=None, batch_size=None, context=None, temperature=1, top_k=0, device='cuda', sample=True):
+    if start_token is None:
+        assert context is not None, 'Specify exactly one of start_token and context!'
+        context = torch.tensor(context, device=device, dtype=torch.long).unsqueeze(0).repeat(batch_size, 1)
+    else:
+        assert context is None, 'Specify exactly one of start_token and context!'
+        context = torch.full((batch_size, 1), start_token, device=device, dtype=torch.long)
+    prev = context
+    output = context
+    past = None
+    with torch.no_grad():
+        for i in range(length):
+            logits, past = model(prev, past=past)
+            logits = logits[:, -1, :] / temperature
+            logits = top_k_logits(logits, k=top_k)
+            log_probs = F.softmax(logits, dim=-1)
+            if sample:
+                prev = torch.multinomial(log_probs, num_samples=1)
+            else:
+                _, prev = torch.topk(log_probs, k=1, dim=-1)
+            output = torch.cat((output, prev), dim=1)
+    return output
