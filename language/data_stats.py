@@ -107,6 +107,8 @@ def dicts_to_pandas(d_list):
                 df.loc[k].at[name] = v
     # del df['name']
     df = df.drop('name')
+    df.loc['tot']=df.sum()
+    # df.append(df.sum(numberic_only=True),ignore_index=True)
     return df
 
 def pandas_to_markdown(df):

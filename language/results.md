@@ -86,3 +86,14 @@ GPT2 av ppl on expanded  dataset:
 python  main.py --task lm_test --expanded_dataset
 ```
 10.2123
+
+### Classification
+Validation set f1 is in the 60s, yet test is quite low. Should probably
+increase the validation set size.
+
+| Model                            | Maslow F1 | Reiss F1 |
+| :---                             | ---:      | ---:     |
+| Pretrained LM Glove 300          | 51.67     | 25.89    |
+| Pretrained Expanded LM Glove 300 | 53.32     | 27.08    |
+| Pretrained LM ELMO               | 49.22     | 25.46    |
+

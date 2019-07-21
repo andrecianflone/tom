@@ -343,8 +343,10 @@ class Seq2Seq(nn.Module):
         self.device = device
         enc_hid_dim = encoder.enc_hid_dim
         dec_hid_dim = decoder.dec_hid_dim
+        self.dec_hid_dim = dec_hid_dim
         # FC layer to project encoder hidden to decoder hidden
         self.fc = nn.Linear(enc_hid_dim * 2, dec_hid_dim)
+        self.classification_mode = False
 
         # Initialize weights
         self.apply(init_weights)
@@ -378,7 +380,32 @@ class Seq2Seq(nn.Module):
         mask = (src != self.pad_idx).permute(1, 0)
         return mask
 
-    def forward(self, src, src_len, trg, teacher_forcing_ratio = 0.5):
+    def mode_classification(self, maslow_classes, reiss_classes):
+        """
+        Add Linear layer on top Encoder output
+        """
+        self.classification_mode = True
+        self.fc1 = nn.Linear(self.dec_hid_dim, maslow_classes).to(device)
+        self.fc2 = nn.Linear(self.dec_hid_dim, reiss_classes).to(device)
+
+    def forward_classify(self, text, text_len, label, task):
+        """
+        Forward pass when in classification mode
+        """
+        #hidden is the final forward and backward hidden states, passed through a linear layer
+        encoder_outputs, hidden = self.encoder(text, text_len)
+
+        # Project Encoder output hidden to Decoder hidden
+        hidden = self.fc(torch.cat((hidden[-2,:,:], hidden[-1,:,:]), dim = 1))
+        hidden = torch.tanh(hidden)
+
+        # Project hidden to classification size
+        if task == 'maslow':
+            return self.fc1(hidden)
+        if task == 'reiss':
+            return self.fc2(hidden)
+
+    def forward(self, src, src_len, trg, teacher_forcing_ratio = 0.5, task='lm'):
         """
         Args:
             src = [src sent len, batch size]
@@ -388,6 +415,9 @@ class Seq2Seq(nn.Module):
             teacher_forcing_ratio is 0.75 we use teacher forcing 75% of the
             time
         """
+        if self.classification_mode:
+            return self.forward_classify(src, src_len, trg, task)
+
         if trg is None:
             assert teacher_forcing_ratio == 0, "Must be zero during inference"
             inference = True

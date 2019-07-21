@@ -14,7 +14,7 @@ import torch
 import nltk
 from nltk import word_tokenize
 from torchtext.datasets import TranslationDataset
-from torchtext.data import Dataset
+from torchtext.data import Dataset, Example
 import spacy
 from torchtext.data import Field, BucketIterator
 from tqdm import tqdm
@@ -104,9 +104,9 @@ class NaivePsychCorpus():
         """
         Return element in ls most common, random selection if multiple
         """
-        # Delete none
-        if 'none' in ls:
-            ls.remove('none')
+        # Delete `none` and `na`
+        ls = [x for x in ls if x != 'none']
+        ls = [x for x in ls if x != 'na']
         if len(ls) == 0:
             return None
 
@@ -377,8 +377,51 @@ class NaivePsychCorpus():
                 token += 1
 
         return ids
+class NaiveDatasetClassification(Dataset):
+    """
+    Classification version of the dataset, follows similar pattern to the
+    IMDB dataset.
+    """
+    name = "naive"
+    @classmethod
+    def splits(cls, exts, fields, root='.data/',
+               train='train', validation='val', test='test', **kwargs):
+        """Create dataset objects for splits of the Naive classification.
+        Returns train_data, validation_data, test_data
 
-class NaiveDataset(TranslationDataset):
+        Arguments:
+            text_field: The field that will be used for the sentence.
+            label_field: The field that will be used for label data.
+            root: Root dataset storage directory. Default is '.data'.
+            train: Train file prefix
+            val: Val file prefix
+            test: test file prefix
+            Remaining keyword arguments: Passed to the splits method of
+                Dataset.
+        """
+        text_field, label_field = fields
+        fields = [('text', text_field), ('label', label_field)]
+        # Load examples
+        data = [train, validation, test]
+        out = []
+        for d in data:
+            src_path = os.path.join(root, d + exts[0])
+            label_path = os.path.join(root, d + exts[1])
+            examples = cls.load_examples(src_path, label_path, fields)
+            dataset = cls(examples, fields, **kwargs)
+            out.append(dataset)
+        return out
+
+    @classmethod
+    def load_examples(cls, src_path, label_path, fields):
+        texts = [line.rstrip('\n') for line in open(src_path)]
+        labels = [line.rstrip('\n') for line in open(label_path)]
+        examples = []
+        for t, l in zip(texts, labels):
+            examples.append(Example.fromlist([t, l], fields))
+        return examples
+
+class NaiveDatasetLM(TranslationDataset):
 
     """
     Naive Psychology dataset implemented as a torchtext dataset. Inheriting
@@ -409,7 +452,7 @@ class NaiveDataset(TranslationDataset):
             path = kwargs['path']
             del kwargs['path']
 
-        return super(NaiveDataset, cls).splits(
+        return super(NaiveDatasetLM, cls).splits(
             exts, fields, path, root, train, validation, test, **kwargs)
 
 # @log_seconds_delta
@@ -464,7 +507,86 @@ def tokenize_en(text):
     """
     return [tok.text for tok in spacy_en.tokenizer(text)]
 
-def load_naive(args):
+def load_naive_iterators(args, path, fields):
+
+    train, valid, test = NaiveDatasetClassification.splits(\
+                    exts = (args.src_ext, args.trg_ext),
+                    fields = fields,
+                    root=path)
+
+    # Some stats
+    print("Stats for dataset in ", path)
+    # Train
+    count = Counter()
+    for e in train.examples:
+        count.update([e.label])
+    train_d = dict(count)
+    train_d['name'] = "train"
+
+    # Val
+    count = Counter()
+    for e in valid.examples:
+        count.update([e.label])
+    val_d = dict(count)
+    val_d['name'] = 'val'
+
+    # Test
+    count = Counter()
+    for e in test.examples:
+        count.update([e.label])
+    test_d = dict(count)
+    test_d['name'] = 'test'
+    d_list = [train_d, val_d, test_d]
+    df = data_stats.dicts_to_pandas(d_list)
+    md = tabulate(df, headers='keys', tablefmt='pipe')
+    print(md)
+
+    fields[1].build_vocab(train)
+    # Data iterators
+    train_iterator, valid_iterator, test_iterator = BucketIterator.splits(
+        (train, valid, test),
+         batch_size = args.batch_size,
+         sort_within_batch = True,
+         sort_key = lambda x : len(x.text),
+         device = args.device)
+
+    return train_iterator, valid_iterator, test_iterator, fields[1]
+
+def load_naive_cl(args):
+    """
+    Convenience function to load pickle or dataset
+    """
+    text = Field(tokenize = tokenize_en,
+                init_token = '<sos>',
+                eos_token = '<eos>',
+                lower = True,
+                include_lengths = True)
+
+    # Maslow dataset
+    maslow_label = Field(sequential=False, unk_token = None)
+    maslow_path = ".data/stories/story_commonsense/torchtext_class/maslow/"
+    maslow_iterators= \
+        load_naive_iterators(args, maslow_path, fields=(text, maslow_label))
+
+    # Reiss dataset
+    reiss_label = Field(sequential=False, unk_token = None)
+    reiss_path = ".data/stories/story_commonsense/torchtext_class/reiss/"
+    reiss_iterators= \
+            load_naive_iterators(args, reiss_path, fields=(text, reiss_label))
+
+    # Load vocab used for previous model from pickle
+    print(f"Found data pickle, loading from {args.prepared_data}")
+    with open(args.prepared_data, 'rb') as p:
+        d = pickle.load(p)
+        combined_vocab = d["combined_vocab"]
+        args.emb_dim = d["emb_dim"]
+        loaded_vectors = d["loaded_vectors"]
+
+    text.vocab = combined_vocab
+
+    return maslow_iterators, reiss_iterators,text,loaded_vectors
+
+def load_naive_lm(args):
     """
     Convenience function to load pickle or dataset
     """
@@ -484,7 +606,7 @@ def load_naive(args):
     else:
         path = ".data/stories/story_commonsense/torchtext"
 
-    train_data, valid_data, test_data = NaiveDataset.splits(\
+    train_data, valid_data, test_data = NaiveDatasetLM.splits(\
                     exts = (args.src_ext, args.trg_ext), fields = (src, trg),
                     path=path)
 
@@ -594,14 +716,23 @@ def build_combined_vocab(field, *args, **kwargs):
     vocab = field.vocab_cls(counter, specials=specials, **kwargs)
     return vocab
 
-def get_data(args):
+def get_cl_data(args):
+    # Get data
+    maslow_iterators, reiss_iterators, text, loaded_vectors =\
+                                                        load_naive_cl(args)
+    # print(f"Number of training examples: {len(train_iterator.dataset.examples)}")
+    # print(f"Number of validation examples: {len(valid_iterator.dataset.examples)}")
+    # print(f"Number of testing examples: {len(test_iterator.dataset.examples)}")
+    return maslow_iterators, reiss_iterators, text, loaded_vectors
+
+def get_lm_data(args):
     # Get data
     train_iterator, valid_iterator, test_iterator, src, trg, loaded_vectors =\
-                                                        load_naive(args)
+                                                        load_naive_lm(args)
     print(f"Number of training examples: {len(train_iterator.dataset.examples)}")
     print(f"Number of validation examples: {len(valid_iterator.dataset.examples)}")
     print(f"Number of testing examples: {len(test_iterator.dataset.examples)}")
-    return train_iterator, valid_iterator, test_iterator, src, trg, loaded_vectors
+    return train_iterator,valid_iterator,test_iterator,src,trg, loaded_vectors
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Datasets')
