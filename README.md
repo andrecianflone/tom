@@ -40,7 +40,8 @@ Number of stories where fifth sentence contains an example of
 | story_count      |    9885 |  2483 |   2370 |
 
 ### Classification dataset stats
-*Maslow*
+**Maslow**
+
 |                  |   train |   val |   test |
 |:-----------------|--------:|------:|-------:|
 | esteem           |    1605 |   388 |   1626 |
@@ -50,7 +51,8 @@ Number of stories where fifth sentence contains an example of
 | stability        |    2162 |   559 |   2683 |
 | tot              |    7868 |  1966 |   9102 |
 
-*Reiss*
+**Reiss**
+
 |             |   train |   val |   test |
 |:------------|--------:|------:|-------:|
 | approval    |     364 |    85 |    400 |
