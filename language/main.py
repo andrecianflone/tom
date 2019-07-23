@@ -2,8 +2,10 @@
 LM on the Naive Psych story dataset
 
 Beam search:
-    AllenNLP: https://allenai.github.io/allennlp-docs/api/allennlp.nn.beam_search.html
-    OpenNMT: https://github.com/OpenNMT/OpenNMT-py/blob/master/onmt/translate/beam.py
+    AllenNLP:
+      https://allenai.github.io/allennlp-docs/api/allennlp.nn.beam_search.html
+    OpenNMT:
+      https://github.com/OpenNMT/OpenNMT-py/blob/master/onmt/translate/beam.py
 """
 import math
 import time
@@ -17,12 +19,14 @@ import torch.optim as optim
 import data
 from data import tokenize_en
 import utils
+import models
 import numpy as np
 from tqdm import trange
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, classification_report, confusion_matrix
 
-from pytorch_pretrained_bert import GPT2LMHeadModel, GPT2Tokenizer
+from pytorch_transformers import GPT2LMHeadModel, GPT2Tokenizer
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+from torchtext.data import Field
 
 def train_cl(args, model, maslow_it, reiss_it, optimizer, criterion, clip):
     """ Fine tune model for classification """
@@ -34,16 +38,20 @@ def train_cl(args, model, maslow_it, reiss_it, optimizer, criterion, clip):
     re_true = []
     # reiss_iterator = iter(reiss_it)
 
+    #TODO: add tqdm here, show progress bar
+
     # Note if iterators not same length, one it will end early
     for i, (batch_ma, batch_re) in enumerate(zip(maslow_it, reiss_it)):
         # For debugging, check if max num of batches
         if args.max_batches is not None and i > args.max_batches:
             break
+
         # Maslow
         text, text_len = batch_ma.text
         label = batch_ma.label
         optimizer.zero_grad()
         output = model(text, text_len, label, task='maslow')
+        # sys.exit(1)
         loss1 = criterion(output, label)
         _, predicted = torch.max(output.data, 1)
         ma_pred.extend(predicted.tolist())
@@ -235,22 +243,25 @@ def generate_sentence(model, sentence, src, trg):
     return translation, attention
 
 def main_classification(args):
-    # Get data and model
+    print('Get data and model')
     ma_iterators, reiss_iterators, text, vec = data.get_cl_data(args)
     maslow_train_it, maslow_valid_it, maslow_test_it, maslow_label=ma_iterators
     reiss_train_it, reiss_valid_it, reiss_test_it, reiss_label= reiss_iterators
 
-    model = utils.create_seq2seq_model(args, text, text, vec)
-    model.load_state_dict(torch.load(args.save_path))
-    model.mode_classification(\
-            maslow_classes=len(maslow_label.vocab.itos),
-            reiss_classes=len(reiss_label.vocab.itos))
+    # Number of labels per task:
+    classes = [len(maslow_label.vocab), len(reiss_label.vocab)]
+    if args.model == 'seq2seq':
+        model = utils.create_seq2seq_model_cl(args, text, text, vec,
+                                                    maslow_label, reiss_label)
+    elif args.model == 'gpt2':
+        model = models.GPT2Classifier(classes, args.gpttokenizer).to(device)
 
     best_valid_loss = float('inf')
     best_valid_epoch = 0
     optimizer = optim.Adam(model.parameters())
     criterion = nn.CrossEntropyLoss()
 
+    print('Training starting...')
     # Main loop
     for epoch in range(args.num_epochs):
         start_time = time.time()
@@ -374,6 +385,8 @@ if __name__ == '__main__':
                         help='Max batches per epoch, for debugging (default None)')
 
     # model
+    add('--model', default='seq2seq', choices=['seq2seq', 'gpt2'],
+                        help='Type of model (default: %(default)s)')
     add('--save', action='store_true', default=True,
                         help='Whether to save the model while training')
     add('--saved_model_name', type=str, default='naive.pt')
@@ -409,11 +422,47 @@ if __name__ == '__main__':
     add('--expanded_dataset', action='store_true', default=False,
                         help='Expanded Naive dataset')
 
+    add('--tokenizer', default='spacy', choices=['raw', 'spacy', 'gpt2'],
+                        help='Tokenizer for iterators (default: %(default)s)')
+
     args = parser.parse_args()
 
     # Model save path
     folder = "saved_models"
     args.save_path = os.path.join(folder, args.saved_model_name)
+
+    # GPT2 special settings
+    if args.model == 'gpt2':
+        args.tokenizer = 'gpt2'
+        gpt_tok = GPT2Tokenizer.from_pretrained('gpt2')
+        # Add special '[CLS]' token id
+        gpt_tok.cls_token = '<cls>'
+        gpt_tok.unk_token = '<unk>'
+        gpt_tok.pad_token = '<pad>'
+        gpt_tok.add_tokens(['<unk>', '<cls>', '<pad>'])
+        def tok(x):
+            return gpt_tok.encode(x)
+        def preprocess(x):
+            """ Truncate to max len """
+            return x[-gpt_tok.max_len:]
+        def postprocess(x, placeholder):
+            new_x = []
+            for sent in x:
+                sent.append(gpt_tok.encode(gpt_tok.cls_token)[0])
+                new_x.append(sent)
+            return x
+        args.gptfield = Field(tokenize=tok,
+                        use_vocab = None,
+                        lower=False,
+                        init_token = None,
+                        preprocessing = preprocess,
+                        pad_token = gpt_tok.encode(gpt_tok.eos_token)[0],
+                        # pad_token = gpt_tok.encode(gpt_tok.pad_token)[0],
+                        eos_token = gpt_tok.encode(gpt_tok.eos_token)[0],
+                        include_lengths = True,
+                        batch_first=True)
+                        # postprocessing=postprocess)
+        args.gpttokenizer = gpt_tok
 
     # Maybe source with emotions
     if args.with_emotions:

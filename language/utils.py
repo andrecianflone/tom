@@ -117,6 +117,17 @@ def create_seq2seq_model(args, src, trg, loaded_vectors):
                                 args.trainable_embeddings).to(device)
 
     print(f'The model has {count_parameters(model):,} trainable parameters')
+
+def create_seq2seq_model_cl(args, src, trg, loaded_vectors, maslow_label,
+                                                                reiss_label):
+    """
+    Seq2Seq for classification
+    """
+    model = create_seq2seq_model(args, src, trg, loaded_vectors)
+    model.load_state_dict(torch.load(args.save_path))
+    model.mode_classification(\
+            maslow_classes=len(maslow_label.vocab.itos),
+            reiss_classes=len(reiss_label.vocab.itos))
     return model
 
 def top_k_logits(logits, k):

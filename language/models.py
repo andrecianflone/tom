@@ -4,11 +4,91 @@ import torch.nn.functional as F
 import random
 import data
 from allennlp.modules.elmo import Elmo, batch_to_ids
-from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
-from pytorch_pretrained_bert import OpenAIGPTTokenizer, OpenAIGPTModel, OpenAIGPTLMHeadModel
-from pytorch_pretrained_bert import GPT2Tokenizer, GPT2Model, GPT2LMHeadModel
+# from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
+# from pytorch_pretrained_bert import OpenAIGPTTokenizer, OpenAIGPTModel, OpenAIGPTLMHeadModel
+from pytorch_transformers import GPT2Tokenizer, GPT2Model, GPT2LMHeadModel
+from pytorch_transformers import GPT2DoubleHeadsModel, GPT2Config
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+class GPT2Classifier(nn.Module):
+    def __init__(self, classes, tokenizer):
+        """
+        Custom Transformer for multi-task n-way classification
+
+        Args:
+            classes: (list) number of classes per task
+        """
+        super().__init__()
+        config = GPT2Config.from_pretrained('gpt2')
+        self.tokenizer = tokenizer
+
+        self.transformer = GPT2Model(config)
+        # self.resize_token_embeddings(len(tokenizer))
+
+        # List of classification projections
+        # self.multi_choice_heads = nn.ModuleList([nn.Linear(\
+                                    # config.hidden_size, c) for c in classes])
+        self.proj1 = nn.Linear(config.hidden_size, classes[0])
+        self.proj2 = nn.Linear(config.hidden_size, classes[1])
+
+        self.activation = nn.Identity()
+        if hasattr(config, 'summary_activation') and \
+                                        config.summary_activation == 'tanh':
+            self.activation = nn.Tanh()
+
+        self.first_dropout = nn.Identity()
+        if hasattr(config, 'summary_first_dropout') and \
+                                            config.summary_first_dropout > 0:
+            self.first_dropout = nn.Dropout(config.summary_first_dropout)
+
+        self.last_dropout = nn.Identity()
+        if hasattr(config, 'summary_last_dropout') and \
+                                            config.summary_last_dropout > 0:
+            self.last_dropout = nn.Dropout(config.summary_last_dropout)
+
+    def encode(self, choices):
+        input_ids = torch.tensor([self.tokenizer.encode(s) for s in choices])
+        return input_ids
+
+    def forward(self, input_ids, text_len, label, task):
+        hidden_states, presents = self.transformer(input_ids)
+
+        # Last in text_len:
+        token_ids = text_len.unsqueeze(-1).unsqueeze(-1)
+        token_ids = token_ids.expand((-1,) * (token_ids.dim()-1) + (hidden_states.size(-1),))
+        # token_ids = token_ids.expand((-1,) * (token_ids.dim()-1) + \
+                                                    # (hidden_states.size(-1),))
+
+        # Hack, otherwise ids are out of bounds
+        token_ids = token_ids - 1
+
+        # Get output from last eos tag in input
+        # shape (bsz, XX, hidden_size)
+        hidden = hidden_states.gather(-2, token_ids).squeeze(-2)
+
+        # # Assumes [CLS] tag is last token
+        # hidden = hidden_states[:, -1]
+        predictions = []
+
+        # Loop over output projections
+        # for head in self.multi_choice_heads:
+        output = self.first_dropout(hidden)
+        output = self.proj1(output)
+        output = self.activation(output)
+        output = self.last_dropout(output)
+        predictions.append(output)
+
+        output = self.first_dropout(hidden)
+        output = self.proj2(hidden)
+        output = self.activation(output)
+        output = self.last_dropout(output)
+        predictions.append(output)
+
+        if task == 'maslow':
+            return predictions[0]
+        if task == 'reiss':
+            return predictions[1]
 
 class GPT2(nn.Module):
     # Load pre-trained model tokenizer (vocabulary)
@@ -25,7 +105,6 @@ class GPT2(nn.Module):
     tokens_tensor_2 = torch.tensor([indexed_tokens_2])
 
 class GPTEmbedding(nn.Module):
-
     def __init__(self, itos):
         super(GPTEmbedding, self).__init__()
         # Load pre-trained model tokenizer (vocabulary)
@@ -461,4 +540,18 @@ class Seq2Seq(nn.Module):
 
         return outputs, attentions
 
+if __name__ == '__main__':
+    """For testing models"""
+    model = GPT2Classifier().to(device)
+
+    # Assume you've added [CLS] to the vocabulary
+    choices = ["Hello, my dog is cute [CLS]", "Hello, my cat is cute [CLS]"]
+
+    # Batch size 1, 2 choices
+    input_ids = model.encode(choices).unsqueeze(0).to(device)
+    # The ids below are the position of the tokens which signal classification
+    # i.e., the position of token [CLS]. If not provided, will be the last token
+    mc_token_ids = torch.tensor([0, 1]).unsqueeze(0).to(device)  # Batch size 1
+    outputs = model(input_ids, mc_token_ids)
+    pass
 

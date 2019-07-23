@@ -16,12 +16,13 @@ from nltk import word_tokenize
 from torchtext.datasets import TranslationDataset
 from torchtext.data import Dataset, Example
 import spacy
-from torchtext.data import Field, BucketIterator
+from torchtext.data import RawField, Field, BucketIterator
 from tqdm import tqdm
 import numpy as np
 import data_stats
 from data_stats import maybe_extend
 from tabulate import tabulate
+from pytorch_transformers import GPT2Tokenizer
 
 class Dictionary(object):
     def __init__(self):
@@ -501,6 +502,10 @@ def load_text_vec(alphabet,filename="",embedding_size=-1):
 # Load tokenizers
 spacy_en = spacy.load('en')
 
+def tokenize_raw(text):
+    """ No tokenization """
+    return [text]
+
 def tokenize_en(text):
     """
     Tokenizes English text from a string into a list of strings (tokens)
@@ -556,11 +561,24 @@ def load_naive_cl(args):
     """
     Convenience function to load pickle or dataset
     """
-    text = Field(tokenize = tokenize_en,
+    if args.tokenizer == 'spacy':
+        text = Field(tokenize = tokenize_en,
                 init_token = '<sos>',
                 eos_token = '<eos>',
                 lower = True,
-                include_lengths = True)
+                include_lengths = True,
+                use_vocab=True)
+
+    elif args.tokenizer == 'raw':
+        text = Field(tokenize = tokenize_raw,
+                init_token = '<sos>',
+                eos_token = '<eos>',
+                lower = True,
+                include_lengths = True,
+                use_vocab=True)
+
+    elif args.tokenizer == 'gpt2':
+        text = args.gptfield
 
     # Maslow dataset
     maslow_label = Field(sequential=False, unk_token = None)
