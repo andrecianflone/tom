@@ -132,6 +132,14 @@ case "$1" in
                 --batch_size 32 \
                 --num_epochs 50
             ;;
+        13)
+            echo "Zero-shot classification with pretrained GPT2"
+            eval $BASE \
+                --task 'zero_shot' \
+                --model 'gpt2' \
+                --batch_size 32 \
+                --num_epochs 50
+            ;;
         *)
             usage "You need to call $0 with an int option"
             exit 1

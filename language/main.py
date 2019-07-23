@@ -22,9 +22,10 @@ import utils
 import models
 import numpy as np
 from tqdm import trange
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, classification_report, confusion_matrix
+from sklearn.metrics import accuracy_score, f1_score, precision_score
+from sklearn.metrics import recall_score, classification_report, confusion_matrix
+from pytorch_transformers import GPT2LMHeadModel, GPT2Tokenizer, GPT2Config
 
-from pytorch_transformers import GPT2LMHeadModel, GPT2Tokenizer
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def train_cl(args, model, maslow_it, reiss_it, optimizer, criterion, clip):
@@ -143,12 +144,12 @@ def evaluate_ppl_gpt(args):
         target = torch.tensor([target]).to(device)
         with torch.no_grad():
             #pred, past  = model(out)
-            l = model(out, lm_labels=target)
+            l = model(out, labels=target)
             loss += float(l)
     av_loss = loss / len(loss)
     print(f"ppl: {math.exp(av_loss):.04f}")
 
-def evaluate_cl(model, maslow_it, reiss_it, criterion):
+def evaluate_cl(model, maslow_it, reiss_it):
     """
     Evaluate the model for a classification task
     Return loss and accuracy
@@ -236,19 +237,100 @@ def generate_sentence(model, sentence, src, trg):
     numericalized = [src.vocab.stoi[t] for t in tokenized]
     sentence_length = torch.LongTensor([len(numericalized)]).to(device)
     tensor = torch.LongTensor(numericalized).unsqueeze(1).to(device)
-    translation_tensor_logits, attention = model(tensor, sentence_length, None, 0)
+    translation_tensor_logits,attention = model(tensor,sentence_length,None,0)
     translation_tensor = torch.argmax(translation_tensor_logits.squeeze(1), 1)
     translation = [trg.vocab.itos[t] for t in translation_tensor]
     translation, attention = translation[1:], attention[1:]
     return translation, attention
 
-def zero_shot_gpt2(args):
-    print('Get data and model')
-    ma_iterators, reiss_iterators, text, vec = data.get_cl_data(args)
-    maslow_train_it, maslow_valid_it, maslow_test_it, maslow_label=ma_iterators
-    reiss_train_it, reiss_valid_it, reiss_test_it, reiss_label= reiss_iterators
+def most_probable_label(model, label, label_query, dictionary, past, tokenizer):
 
-    model = models.GPT2Classifier(classes, args.gpttokenizer).to(device)
+    # Encode labels
+    lowest_loss = float('inf')
+    pred_label = -1
+    true_label = dictionary.word2idx[label]
+
+    for i, lbl in enumerate(dictionary.idx2word):
+        current_label = i
+        # Encode for GPT
+        lbl = label_query + " " + lbl
+        text = torch.tensor([tokenizer.encode(lbl)])
+        outputs = model(text, labels=text, past=past)
+        loss = outputs[:1]
+        loss = float(loss[0])
+        if loss < lowest_loss:
+            lowest_loss = loss
+            pred_label = i
+
+    # Return arg max and true label
+    return pred_label, true_label
+
+def evaluate_zero_shot(args, model, tokenizer, path, src_query, trg_query):
+    """
+    Evaluate the model for a zero-shot classification task
+    Return loss and accuracy
+    """
+    model.eval()
+    pred_ls = []
+    true_ls = []
+
+    #### Data
+    test_src = [line.rstrip('\n') for line in open(path+"/test.src")]
+    test_trg = [line.rstrip('\n') for line in open(path+"/test.trg")]
+
+    # Targets dictionary
+    dictionary = data.Dictionary()
+    for l in test_trg:
+        dictionary.add_word(l)
+
+    for i in trange(len(test_src)):
+        src, trg = test_src[i], test_trg[i]
+        src += src_query
+        # Get context hidden states once to speed up eval
+        context = torch.tensor([tokenizer.encode(src)])
+        pred, past = model(context)
+        mp, true_lbl = most_probable_label(model, trg, trg_query, dictionary,
+                                                            past, tokenizer)
+        pred_ls.append(mp)
+        true_ls.append(true_lbl)
+
+    return  pred_ls, true_ls
+
+def zero_shot_gpt2(args):
+    print('Get model')
+    config = GPT2Config.from_pretrained('gpt2')
+    model = GPT2LMHeadModel(config)
+    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+
+    print("Evaluating Maslow test set with GPT2")
+    path = ".data/stories/story_commonsense/torchtext_class/maslow/"
+    src_query = " That made them"
+    trg_query = " feel" # need to split due to offset in loss
+    ma_t_pred, ma_t_true = \
+        evaluate_zero_shot(args, model, tokenizer, path, src_query, trg_query)
+
+    print("Evaluating Reiss test set with GPT2")
+    path = ".data/stories/story_commonsense/torchtext_class/reiss/"
+    src_query = " They did this to"
+    trg_query = " to" # need to split due to offset in loss
+    re_t_true, re_t_pred = \
+        evaluate_zero_shot(args, model, tokenizer, path, src_query, trg_query)
+
+    # Maslow
+    t_acc = accuracy_score(ma_t_true, ma_t_pred)
+    t_f1 = f1_score(ma_t_true, ma_t_pred, average='macro')
+    t_p = precision_score(ma_t_true, ma_t_pred, average='macro')
+    t_r = recall_score(ma_t_true, ma_t_pred, average='macro')
+    print('Maslow')
+    print(f'\t Test | acc: {t_acc:7.4f} | f1: {t_f1:7.4f} | prec: {t_p:7.4f} | rec: {t_r:7.4f}')
+
+    # Reiss
+    t_acc = accuracy_score(re_t_true, re_t_pred)
+    t_f1 = f1_score(re_t_true, re_t_pred, average='macro')
+    t_p = precision_score(re_t_true, re_t_pred, average='macro')
+    t_r = recall_score(re_t_true, re_t_pred, average='macro')
+    print('Reiss')
+    print(f'\t Test | acc: {t_acc:7.4f} | f1: {t_f1:7.4f} | prec: {t_p:7.4f} | rec: {t_r:7.4f}')
 
 def main_classification(args):
     print('Get data and model')
@@ -390,7 +472,7 @@ if __name__ == '__main__':
     add('--num_epochs', type=int, default=15,
                         help='upper epoch limit')
     add('--max_batches', type=int, default=None,
-                        help='Max batches per epoch, for debugging (default None)')
+                        help='Max batches per epoch, to debug (default None)')
 
     # model
     add('--model', default='seq2seq', choices=['seq2seq', 'gpt2'],
@@ -401,7 +483,7 @@ if __name__ == '__main__':
 
     # Task
     add('--task', default='lm_train', choices=['lm_train', 'lm_test',
-                        'generate', 'classification'],
+                        'generate', 'classification', 'zero_shot'],
                         help='Which task to do (default: %(default)s)')
     add('--emb_dim', type=int, default=300, metavar='N',
                         help='embedding size')
@@ -410,7 +492,8 @@ if __name__ == '__main__':
     add('--generate', action='store_true', default=False,
                         help='Inference test')
     # Embeddings
-    add('--embedding_type', default='None', choices=['glove', 'elmo', 'gpt', 'bert'],
+    add('--embedding_type', default='None',
+                        choices=['glove', 'elmo', 'gpt', 'bert'],
                         help='Embedding type (default: %(default)s)')
     add('--use_pretrained_embeddings', action='store_true',
                 default=False, help='Use pretrained embeddings such as Glove')
@@ -442,8 +525,8 @@ if __name__ == '__main__':
     # GPT2 special settings
     if args.model == 'gpt2':
         args.tokenizer = 'gpt2'
-        args.gptfield, args.gpttokenizer = \
-                               models.GPT2Classifier.classification_field_tok()
+        args.gpt_maslowfield, args.gpt_reissfield, args.gpttokenizer = \
+                               models.GPT2Classifier.field(args.task)
 
     # Maybe source with emotions
     if args.with_emotions:
@@ -471,4 +554,5 @@ if __name__ == '__main__':
         evaluate_ppl_gpt(args)
     elif args.task == "classification":
         main_classification(args)
-
+    elif args.task == "zero_shot":
+        zero_shot_gpt2(args)

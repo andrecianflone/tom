@@ -562,35 +562,38 @@ def load_naive_cl(args):
     Convenience function to load pickle or dataset
     """
     if args.tokenizer == 'spacy':
-        text = Field(tokenize = tokenize_en,
+        maslow_text = Field(tokenize = tokenize_en,
                 init_token = '<sos>',
                 eos_token = '<eos>',
                 lower = True,
                 include_lengths = True,
                 use_vocab=True)
+        reiss_text = maslow_text
 
     elif args.tokenizer == 'raw':
-        text = Field(tokenize = tokenize_raw,
+        maslow_text = Field(tokenize = tokenize_raw,
                 init_token = '<sos>',
                 eos_token = '<eos>',
                 lower = True,
                 include_lengths = True,
                 use_vocab=True)
+        reiss_text = maslow_text
 
     elif args.tokenizer == 'gpt2':
-        text = args.gptfield
+        maslow_text = args.gpt_maslowfield
+        reiss_text = args.gpt_reissfield
 
     # Maslow dataset
     maslow_label = Field(sequential=False, unk_token = None)
     maslow_path = ".data/stories/story_commonsense/torchtext_class/maslow/"
     maslow_iterators= \
-        load_naive_iterators(args, maslow_path, fields=(text, maslow_label))
+        load_naive_iterators(args, maslow_path, fields=(maslow_text, maslow_label))
 
     # Reiss dataset
     reiss_label = Field(sequential=False, unk_token = None)
     reiss_path = ".data/stories/story_commonsense/torchtext_class/reiss/"
     reiss_iterators= \
-            load_naive_iterators(args, reiss_path, fields=(text, reiss_label))
+            load_naive_iterators(args, reiss_path, fields=(reiss_text, reiss_label))
 
     # Load vocab used for previous model from pickle
     print(f"Found data pickle, loading from {args.prepared_data}")
@@ -600,9 +603,10 @@ def load_naive_cl(args):
         args.emb_dim = d["emb_dim"]
         loaded_vectors = d["loaded_vectors"]
 
-    text.vocab = combined_vocab
+    maslow_text.vocab = combined_vocab
+    reiss_text.vocab = combined_vocab
 
-    return maslow_iterators, reiss_iterators,text,loaded_vectors
+    return maslow_iterators, reiss_iterators, maslow_text, loaded_vectors
 
 def load_naive_lm(args):
     """
@@ -738,9 +742,6 @@ def get_cl_data(args):
     # Get data
     maslow_iterators, reiss_iterators, text, loaded_vectors =\
                                                         load_naive_cl(args)
-    # print(f"Number of training examples: {len(train_iterator.dataset.examples)}")
-    # print(f"Number of validation examples: {len(valid_iterator.dataset.examples)}")
-    # print(f"Number of testing examples: {len(test_iterator.dataset.examples)}")
     return maslow_iterators, reiss_iterators, text, loaded_vectors
 
 def get_lm_data(args):

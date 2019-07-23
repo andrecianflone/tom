@@ -96,6 +96,6 @@ increase the validation set size.
 | Seq2Seq Glove 300             | 51.67     | 25.89    |
 | Seq2Seq Expanded LM Glove 300 | 53.32     | 27.08    |
 | Seq2Seq ELMO                  | 49.22     | 25.46    |
-| GPT2*                         | 31.47     | 7.66     |
+| GPT2*                         | 32.27     | 7.66     |
 
 *GPT2 was pretrained on WebText dataset by OpenAI.

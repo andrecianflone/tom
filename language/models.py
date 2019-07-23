@@ -93,11 +93,8 @@ class GPT2Classifier(nn.Module):
         if task == 'reiss':
             return predictions[1]
 
-    @staticmethod
-    def classification_field_tok():
-        """
-        Return field and GPT2 tokenizer for GPT2 classification
-        """
+    @classmethod
+    def _tokenizer(cls):
         gpt_tok = GPT2Tokenizer.from_pretrained('gpt2')
         # Add special tokens id
         gpt_tok.cls_token = '<cls>'
@@ -106,15 +103,14 @@ class GPT2Classifier(nn.Module):
         gpt_tok.add_tokens(['<unk>', '<cls>', '<pad>'])
         def tok(x):
             return gpt_tok.encode(x)
-        def preprocess(x):
-            """ Truncate to max len """
-            return x[-gpt_tok.max_len:]
-        def postprocess(x, placeholder):
-            new_x = []
-            for sent in x:
-                sent.append(gpt_tok.encode(gpt_tok.cls_token)[0])
-                new_x.append(sent)
-            return x
+        return gpt_tok, tok
+
+    @classmethod
+    def _field_common(cls, gpt_tok, tok, preprocess):
+        """
+        Return GPT2 tokenizer object and tokinization function
+        """
+
         field = Field(tokenize=tok,
                         use_vocab = None,
                         lower=False,
@@ -125,22 +121,62 @@ class GPT2Classifier(nn.Module):
                         eos_token = gpt_tok.encode(gpt_tok.cls_token)[0],
                         include_lengths = True,
                         batch_first=True)
-                        # postprocessing=postprocess)
-        return field, gpt_tok
 
-class GPT2(nn.Module):
-    # Load pre-trained model tokenizer (vocabulary)
-    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+        return field
 
-    # Encode some inputs
-    text_1 = "Who was Jim Henson ?"
-    text_2 = "Jim Henson was a puppeteer"
-    indexed_tokens_1 = tokenizer.encode(text_1)
-    indexed_tokens_2 = tokenizer.encode(text_2)
+    @classmethod
+    def _field_classification(cls):
+        """
+        Return field and GPT2 tokenizer for GPT2 classification
+        """
+        gpt_tok, tok = cls._tokenizer()
+        def preprocess(x):
+            """ Truncate to max len """
+            return x[-gpt_tok.max_len:]
+        def postprocess(x, placeholder):
+            new_x = []
+            for sent in x:
+                sent.append(gpt_tok.encode(gpt_tok.cls_token)[0])
+                new_x.append(sent)
+            return x
+        field = cls._field_common(gpt_tok, tok, preprocess)
 
-    # Convert inputs to PyTorch tensors
-    tokens_tensor_1 = torch.tensor([indexed_tokens_1])
-    tokens_tensor_2 = torch.tensor([indexed_tokens_2])
+        return field, field, gpt_tok
+
+    @classmethod
+    def _field_zero_shot(cls):
+        """
+        Return field and GPT2 tokenizer for GPT2 zero-shot classification
+        """
+        gpt_tok, tok = cls._tokenizer()
+        def maslow_preprocess(x):
+            # Query statement
+            statement = "It made them feel"
+            # Truncate to max len
+            x.extend(gpt_tok.encode(statement))
+            x = x[-gpt_tok.max_len:]
+            return x
+
+        maslow_field = cls._field_common(gpt_tok, tok, maslow_preprocess)
+
+        def reiss_preprocess(x):
+            # Query statement
+            statement = "They did this for"
+            # Truncate (beginning) to max len
+            x.extend(gpt_tok.encode(statement))
+            x = x[-gpt_tok.max_len:]
+            return x
+
+        reiss_field = cls._field_common(gpt_tok, tok, reiss_preprocess)
+
+        return maslow_field, reiss_field, gpt_tok
+
+    @classmethod
+    def field(cls, task):
+        if task == 'classification':
+            return cls._field_classification()
+        elif task == 'zero_shot':
+            return cls._field_zero_shot()
 
 class GPTEmbedding(nn.Module):
     def __init__(self, itos):
