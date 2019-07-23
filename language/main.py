@@ -26,7 +26,6 @@ from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_sc
 
 from pytorch_transformers import GPT2LMHeadModel, GPT2Tokenizer
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-from torchtext.data import Field
 
 def train_cl(args, model, maslow_it, reiss_it, optimizer, criterion, clip):
     """ Fine tune model for classification """
@@ -128,6 +127,7 @@ def evaluate_ppl_gpt(args):
     loss = 0
     batch_size = 1
 
+    print("Evaluating test set with GPT2")
     for i in trange(len(test_src)):
         src, trg = test_src[i], test_trg[i]
         context = enc.encode(src)
@@ -241,6 +241,14 @@ def generate_sentence(model, sentence, src, trg):
     translation = [trg.vocab.itos[t] for t in translation_tensor]
     translation, attention = translation[1:], attention[1:]
     return translation, attention
+
+def zero_shot_gpt2(args):
+    print('Get data and model')
+    ma_iterators, reiss_iterators, text, vec = data.get_cl_data(args)
+    maslow_train_it, maslow_valid_it, maslow_test_it, maslow_label=ma_iterators
+    reiss_train_it, reiss_valid_it, reiss_test_it, reiss_label= reiss_iterators
+
+    model = models.GPT2Classifier(classes, args.gpttokenizer).to(device)
 
 def main_classification(args):
     print('Get data and model')
@@ -434,35 +442,8 @@ if __name__ == '__main__':
     # GPT2 special settings
     if args.model == 'gpt2':
         args.tokenizer = 'gpt2'
-        gpt_tok = GPT2Tokenizer.from_pretrained('gpt2')
-        # Add special '[CLS]' token id
-        gpt_tok.cls_token = '<cls>'
-        gpt_tok.unk_token = '<unk>'
-        gpt_tok.pad_token = '<pad>'
-        gpt_tok.add_tokens(['<unk>', '<cls>', '<pad>'])
-        def tok(x):
-            return gpt_tok.encode(x)
-        def preprocess(x):
-            """ Truncate to max len """
-            return x[-gpt_tok.max_len:]
-        def postprocess(x, placeholder):
-            new_x = []
-            for sent in x:
-                sent.append(gpt_tok.encode(gpt_tok.cls_token)[0])
-                new_x.append(sent)
-            return x
-        args.gptfield = Field(tokenize=tok,
-                        use_vocab = None,
-                        lower=False,
-                        init_token = None,
-                        preprocessing = preprocess,
-                        pad_token = gpt_tok.encode(gpt_tok.eos_token)[0],
-                        # pad_token = gpt_tok.encode(gpt_tok.pad_token)[0],
-                        eos_token = gpt_tok.encode(gpt_tok.eos_token)[0],
-                        include_lengths = True,
-                        batch_first=True)
-                        # postprocessing=postprocess)
-        args.gpttokenizer = gpt_tok
+        args.gptfield, args.gpttokenizer = \
+                               models.GPT2Classifier.classification_field_tok()
 
     # Maybe source with emotions
     if args.with_emotions:
@@ -487,7 +468,6 @@ if __name__ == '__main__':
     elif args.task == "lm_train":
         main_lm(args)
     elif args.task == "lm_test":
-        print("Evaluating test set with GPT2")
         evaluate_ppl_gpt(args)
     elif args.task == "classification":
         main_classification(args)

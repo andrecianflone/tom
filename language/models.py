@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchtext.data import Field
 import random
 import data
 from allennlp.modules.elmo import Elmo, batch_to_ids
@@ -25,6 +26,7 @@ class GPT2Classifier(nn.Module):
 
         self.transformer = GPT2Model(config)
         # self.resize_token_embeddings(len(tokenizer))
+        self.transformer.resize_token_embeddings(len(tokenizer))
 
         # List of classification projections
         # self.multi_choice_heads = nn.ModuleList([nn.Linear(\
@@ -60,7 +62,8 @@ class GPT2Classifier(nn.Module):
         # token_ids = token_ids.expand((-1,) * (token_ids.dim()-1) + \
                                                     # (hidden_states.size(-1),))
 
-        # Hack, otherwise ids are out of bounds
+        # Since the token_ids are actually the text length, need to offset by 1
+        # due to zero-indexing. Otherwise grab wrong index and out of bounds.
         token_ids = token_ids - 1
 
         # Get output from last eos tag in input
@@ -89,6 +92,41 @@ class GPT2Classifier(nn.Module):
             return predictions[0]
         if task == 'reiss':
             return predictions[1]
+
+    @staticmethod
+    def classification_field_tok():
+        """
+        Return field and GPT2 tokenizer for GPT2 classification
+        """
+        gpt_tok = GPT2Tokenizer.from_pretrained('gpt2')
+        # Add special tokens id
+        gpt_tok.cls_token = '<cls>'
+        gpt_tok.unk_token = '<unk>'
+        gpt_tok.pad_token = '<pad>'
+        gpt_tok.add_tokens(['<unk>', '<cls>', '<pad>'])
+        def tok(x):
+            return gpt_tok.encode(x)
+        def preprocess(x):
+            """ Truncate to max len """
+            return x[-gpt_tok.max_len:]
+        def postprocess(x, placeholder):
+            new_x = []
+            for sent in x:
+                sent.append(gpt_tok.encode(gpt_tok.cls_token)[0])
+                new_x.append(sent)
+            return x
+        field = Field(tokenize=tok,
+                        use_vocab = None,
+                        lower=False,
+                        init_token = None,
+                        preprocessing = preprocess,
+                        # pad_token = gpt_tok.encode(gpt_tok.eos_token)[0],
+                        pad_token = gpt_tok.encode(gpt_tok.pad_token)[0],
+                        eos_token = gpt_tok.encode(gpt_tok.cls_token)[0],
+                        include_lengths = True,
+                        batch_first=True)
+                        # postprocessing=postprocess)
+        return field, gpt_tok
 
 class GPT2(nn.Module):
     # Load pre-trained model tokenizer (vocabulary)

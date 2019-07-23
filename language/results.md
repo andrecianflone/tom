@@ -88,12 +88,14 @@ python  main.py --task lm_test --expanded_dataset
 10.2123
 
 ### Classification
-Validation set f1 is in the 60s, yet test is quite low. Should probably
+Classification results on pretrained language modeling, fine-tuned for classification. Validation set f1 is in the 60s, yet test is quite low. Should probably
 increase the validation set size.
 
-| Model                            | Maslow F1 | Reiss F1 |
-| :---                             | ---:      | ---:     |
-| Pretrained LM Glove 300          | 51.67     | 25.89    |
-| Pretrained Expanded LM Glove 300 | 53.32     | 27.08    |
-| Pretrained LM ELMO               | 49.22     | 25.46    |
+| Model                         | Maslow F1 | Reiss F1 |
+| :---                          | ---:      | ---:     |
+| Seq2Seq Glove 300             | 51.67     | 25.89    |
+| Seq2Seq Expanded LM Glove 300 | 53.32     | 27.08    |
+| Seq2Seq ELMO                  | 49.22     | 25.46    |
+| GPT2*                         | 31.47     | 7.66     |
 
+*GPT2 was pretrained on WebText dataset by OpenAI.
