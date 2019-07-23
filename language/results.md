@@ -97,5 +97,8 @@ increase the validation set size.
 | Seq2Seq Expanded LM Glove 300 | 53.32     | 27.08    |
 | Seq2Seq ELMO                  | 49.22     | 25.46    |
 | GPT2*                         | 32.27     | 7.66     |
+| GPT2** zero-shot              | 15.89     |          |
 
 *GPT2 was pretrained on WebText dataset by OpenAI.
+
+**Adds a query sentence followed labels. Selects most likely label.

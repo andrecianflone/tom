@@ -13,6 +13,7 @@ import os
 import sys
 import argparse
 import pickle
+from random import shuffle
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -278,12 +279,28 @@ def evaluate_zero_shot(args, model, tokenizer, path, src_query, trg_query):
     test_src = [line.rstrip('\n') for line in open(path+"/test.src")]
     test_trg = [line.rstrip('\n') for line in open(path+"/test.trg")]
 
+    # Shuffle in case of short eval
+    src_shuf = []
+    trg_shuf = []
+    index_shuf = list(range(len(test_src)))
+    shuffle(index_shuf)
+    for i in index_shuf:
+        src_shuf.append(test_src[i])
+        trg_shuf.append(test_trg[i])
+    test_src = src_shuf
+    test_trg = trg_shuf
+
     # Targets dictionary
     dictionary = data.Dictionary()
     for l in test_trg:
         dictionary.add_word(l)
 
-    for i in trange(len(test_src)):
+    n_samples = len(test_src)
+    if args.max_batches is not None and args.max_batches < n_samples:
+        n_samples = args.max_batches
+
+    # for i in trange(len(test_src)):
+    for i in trange(n_samples):
         src, trg = test_src[i], test_trg[i]
         src += src_query
         # Get context hidden states once to speed up eval
@@ -309,14 +326,7 @@ def zero_shot_gpt2(args):
     ma_t_pred, ma_t_true = \
         evaluate_zero_shot(args, model, tokenizer, path, src_query, trg_query)
 
-    print("Evaluating Reiss test set with GPT2")
-    path = ".data/stories/story_commonsense/torchtext_class/reiss/"
-    src_query = " They did this to"
-    trg_query = " to" # need to split due to offset in loss
-    re_t_true, re_t_pred = \
-        evaluate_zero_shot(args, model, tokenizer, path, src_query, trg_query)
-
-    # Maslow
+    # Maslow results
     t_acc = accuracy_score(ma_t_true, ma_t_pred)
     t_f1 = f1_score(ma_t_true, ma_t_pred, average='macro')
     t_p = precision_score(ma_t_true, ma_t_pred, average='macro')
@@ -324,7 +334,14 @@ def zero_shot_gpt2(args):
     print('Maslow')
     print(f'\t Test | acc: {t_acc:7.4f} | f1: {t_f1:7.4f} | prec: {t_p:7.4f} | rec: {t_r:7.4f}')
 
-    # Reiss
+    print("Evaluating Reiss test set with GPT2")
+    path = ".data/stories/story_commonsense/torchtext_class/reiss/"
+    src_query = " They did this to"
+    trg_query = " to" # need to split due to offset in loss
+    re_t_true, re_t_pred = \
+        evaluate_zero_shot(args, model, tokenizer, path, src_query, trg_query)
+
+    # Reiss results
     t_acc = accuracy_score(re_t_true, re_t_pred)
     t_f1 = f1_score(re_t_true, re_t_pred, average='macro')
     t_p = precision_score(re_t_true, re_t_pred, average='macro')

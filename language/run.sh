@@ -137,8 +137,7 @@ case "$1" in
             eval $BASE \
                 --task 'zero_shot' \
                 --model 'gpt2' \
-                --batch_size 32 \
-                --num_epochs 50
+                --max_batches 1000 \
             ;;
         *)
             usage "You need to call $0 with an int option"
